@@ -1,0 +1,5 @@
+# Opt-in local integration tests only. The database is not exposed by compose.yaml.
+services:
+  db:
+    ports:
+      - "127.0.0.1:15432:5432"

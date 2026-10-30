@@ -13,6 +13,7 @@
 | TypeScript + React + Vite、Qwen3.8-Omni-Flash | 已确认方向 | 模型为 MVP 指定选择，能力、费用和条款仍待验证 |
 | 方案 B；Python API/Worker、PostgreSQL、S3 兼容私有对象存储 | 已批准 MVP 基线 | ADR-004；具体产品、版本及性能仍须验证 |
 | PostgreSQL 持久队列、同源静态前端、Docker Compose | 已批准首轮实施默认 | ADR-004；保留配置和实测后调整空间 |
+| 输入容器为 MP4/MOV；视频 H.264/AVC，音轨若存在为 AAC/MP3 | 产品负责人于 2026-10-29 批准收敛，保持 2h/2GB；WebM 已排除 | PRD §3、AC-03 |
 | URL 仅限安全校验后的 HTTPS 直达媒体文件 | 已确认 MVP 产品范围 | PRD §1/§3；平台播放页面集成另行评估 |
 
 环境输入：北京家庭局域网、Windows 11、Ryzen 7 5800H、32 GB 内存、RTX 3060 Laptop GPU；本机内置 SSD 和外接 SanDisk Extreme 55AE 为备份介质，应用日志位于 `E:\video-summary-app-log`。这些信息不证明容量或备份恢复能力。MVP 媒体边界为本地文件或合法 URL、单视频不超过 2 小时/2 GB，容器及编码白名单以 [PRD §3](PRD.md) 为准，不因模型支持范围而自动改变。
@@ -77,7 +78,7 @@ API 和 Worker 是两个独立运行单元，业务模块可保留在同一代�
 | --- | --- |
 | 接入 | [模型页 API 参考](https://www.qianwenai.com/models/qwen3.8-omni-flash)示例使用 OpenAI Python SDK、`OpenAI(api_key=os.environ["DASHSCOPE_API_KEY"], base_url=...)`、模型 ID `qwen3.8-omni-flash`、`modalities=["text"]`、`stream=True` 及 `stream_options={"include_usage": True}`。它只演示文本问答，不能据此证明视频路径已测试。 |
 | 视频消息 | [Qwen Omni 官方示例](https://help.aliyun.com/zh/model-studio/qwen-omni)使用 `messages` 中的 `content` 数组：`{"type":"video_url","video_url":{"url":"https://..."}}` 加文本提示；模型可同时理解视频画面和声音。应用只传经本地校验后受控的媒体 URL，不直接转发用户原始 URL。 |
-| 限制 | 官方 Omni 页列视频公网 URL ≤2 GB、≤2 小时；Base64 输入编码后 <10 MB。模型页列 1M 上下文、991K 最大输入、131K 最大输出。产品白名单仍由 PRD 规定；WebM 等组合不能从模型页泛称的视频支持推断已通过。 |
+| 限制 | 官方 Omni 页列视频公网 URL ≤2 GB、≤2 小时；Base64 输入编码后 <10 MB。模型页列 1M 上下文、991K 最大输入、131K 最大输出。产品白名单仍由 PRD 规定；本项目首轮只接受 MP4/MOV，不能从模型页泛称的视频支持推断其他容器已获支持。 |
 | 输出与用量 | 该模型只输出文本。流式消费要累计文本，并读取可能单独到达、没有 `choices` 的最终 usage 片段；保存请求 ID、Token 用量和错误分类。页面标价为输入 ¥0.8/百万 Token、输出 ¥2.7/百万 Token、缓存命中输入 ¥0.1/百万 Token；实际账单及失败费用仍需核对。 |
 | JSON | [结构化输出说明](https://platform.qianwenai.com/docs/developer-guides/text-generation/structured-output)列 Qwen3.8-Omni-Flash 的 JSON Object 模式，但它不保证固定字段类型；适配器可请求 JSON Object，后端仍须按 PRD Schema 1.0 校验，不合格不能交付。 |
 | 本地配置 | `DASHSCOPE_API_KEY` 已在未跟踪的 `.env` 设置；Python 的 `os.environ` **不会自动读取文件**，未来服务进程须安全加载该文件或由运行环境注入。[千问AI平台 API Key 说明](https://platform.qianwenai.com/docs/api-reference/preparation/api-key)将当前 `https://maas.qianwenaiapi.com/compatible-mode/v1` 列为按量付费 Key 的 OpenAI 兼容地址；[.env.example](../.env.example)与本地配置一致。不能仅凭地址证明实际推理路由或模型视频能力；不得把 Key、带凭据媒体 URL 或完整请求正文写入日志。 |
