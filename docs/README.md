@@ -9,6 +9,7 @@
 | [AC.md](AC.md)、[E2E_TEST_PLAN.md](E2E_TEST_PLAN.md) | 验收条件与端到端测试场景。 |
 | [QUALITY_EVALUATION.md](QUALITY_EVALUATION.md) | 15 个授权视频的人工质量基线方法；正式阈值尚待基线。 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 已批准的 MVP 架构基线、外部模型 API 依据、详细设计与待验证事项。 |
+| [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Step 3 活跃任务清单、依赖、Agent 分工与实施门槛；工作状态随交付更新。 |
 | [ADR-001](adr/ADR-001-modular-app-queue-worker.md)、[ADR-002](adr/ADR-002-conditional-bypass.md)、[ADR-003](adr/ADR-003-linked-evaluation-cleanup.md)、[ADR-004](adr/ADR-004-approved-mvp-architecture-baseline.md) | 已批准的架构决策和首轮实施默认。 |
 | [GIT_STRATEGY.md](GIT_STRATEGY.md) | 分支用途和变更管理。 |
 
