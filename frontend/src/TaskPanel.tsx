@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import ResultPanel from './ResultPanel'
+import ConsentPanel from './ConsentPanel'
+import DeletionPanel from './DeletionPanel'
 
 type Quota = { credits: number | null; unlimited: boolean; recovery_seconds: number | null }
 type Task = {
@@ -6,6 +9,7 @@ type Task = {
   started_at: string | null; finished_at: string | null; retry_count: number
   cooldown_seconds: number; retry_allowed: boolean; retry_reason: string | null
   failure_category: string | null; refund_status: string; api_fee_warning: boolean
+  duration_seconds?: number; queue_seconds?: number | null; processing_seconds?: number | null; target_seconds?: number | null
 }
 const labels: Record<string, string> = { QUEUED: '排队中', PROCESSING: '处理中', SUCCEEDED: '已完成', FAILED: '失败', CANCELLED: '已取消' }
 const failures: Record<string, string> = {
@@ -33,6 +37,9 @@ function validQuota(value: unknown): value is Quota {
 export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
   csrfToken: string; refreshVersion: number; onExpired: () => void
 }) {
+  const [consentTask, setConsentTask] = useState<string | null>(null)
+  const [deletionRefresh, setDeletionRefresh] = useState(0)
+  const [selectedTask, setSelectedTask] = useState<string | null>(null)
   const [quota, setQuota] = useState<Quota | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [offset, setOffset] = useState(0)
@@ -65,6 +72,7 @@ export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
       if (!validQuota(quotaValue) || !Array.isArray(taskValue) || !taskValue.every(validTask)) throw new Error('Invalid response')
       if (!mounted.current || requestVersion !== version.current) return
       setQuota(quotaValue); setTasks(taskValue); setError('')
+      setSelectedTask(current => current && taskValue.some(task => task.id === current && task.status === 'SUCCEEDED') ? current : null)
       received.current = performance.now(); setElapsed(0)
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === 'AbortError') return
@@ -117,6 +125,21 @@ export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
     } finally { mutating.current = false; if (mounted.current) setPending(null) }
   }
 
+  async function removeTask(task: Task) {
+    if (mutating.current || !window.confirm('删除此任务及其关联资料？访问将立即禁止，实际清理在后台进行。')) return
+    mutating.current = true; setPending(task.id); setActionError(''); setNotice('')
+    try {
+      const response = await fetch(`/api/tasks/${task.id}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'X-CSRF-Token': csrfToken } })
+      if (!mounted.current) return
+      if (response.status === 401) { onExpired(); return }
+      if (!response.ok) throw new Error()
+      refreshing.current?.abort(); ++version.current
+      setTasks(current => current.filter(row => row.id !== task.id)); setSelectedTask(null); setConsentTask(null)
+      setNotice('已禁止访问并提交清理请求。请在删除记录中查看实际清理状态。'); setDeletionRefresh(n => n + 1)
+    } catch { if (mounted.current) setActionError('删除请求结果未确认，请刷新任务和删除记录后再试。') }
+    finally { mutating.current = false; if (mounted.current) setPending(null) }
+  }
+
   const recovery = quota?.recovery_seconds === null ? null : Math.max(0, (quota?.recovery_seconds ?? 0) - elapsed)
   return (
     <section className="task-section" aria-labelledby="tasks-title">
@@ -132,13 +155,23 @@ export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
           <div className="task-heading"><strong>{task.filename || '未命名视频'}</strong><span className={`task-state state-${task.status.toLowerCase()}`}>{labels[task.status]}</span></div>
           {task.submitted_at && <p className="task-time">提交于 {new Date(task.submitted_at).toLocaleString()}</p>}
           <p>{refunds[task.refund_status] || '额度状态待确认'} · 已接受重试 {task.retry_count} / 20 次</p>
+          {(task.status === 'QUEUED' || task.status === 'PROCESSING' || task.status === 'SUCCEEDED') && <div className="task-progress">
+            <progress aria-label={labels[task.status]} {...(task.status === 'SUCCEEDED' ? { value: 100, max: 100 } : task.status === 'QUEUED' ? { value: 0, max: 100 } : {})} />
+            {task.status === 'QUEUED' && <span>等待可用处理名额{typeof task.queue_seconds === 'number' ? ` · 已排队 ${duration(task.queue_seconds + elapsed)}` : ''}</span>}
+            {task.status === 'PROCESSING' && <span>正在分析音视频{typeof task.processing_seconds === 'number' ? ` · 已处理 ${duration(task.processing_seconds + elapsed)}` : ''}。完成时间尚不能准确估计。</span>}
+            {task.target_seconds != null && <span>60 分钟视频处理目标：20 分钟内完成（不含排队，目标尚待实际验证）。</span>}
+            {task.status === 'SUCCEEDED' && <span>处理已完成{typeof task.processing_seconds === 'number' ? ` · 实际处理 ${duration(task.processing_seconds)}` : ''}</span>}
+          </div>}
           {task.failure_category && <p>{failures[task.failure_category] || '任务失败，原因待核实'}</p>}
           {cooldown > 0 && <p className="task-wait">再次尝试约需等待 {duration(cooldown)}。等待结束后仍须由服务器确认。</p>}
           {task.status === 'FAILED' && !task.retry_allowed && cooldown <= 0 && <p className="field-help">{task.retry_count >= 20 ? '已达到累计重试上限。' : '当前状态暂不可重试，请刷新确认。'}</p>}
           {task.api_fee_warning && <p className="fee-warning">模型服务反复超时。继续重试可能产生模型 API 费用，但不会额外扣除此任务的处理机会。</p>}
-          <div className="task-actions">{(task.status === 'QUEUED' || task.status === 'PROCESSING') && <button type="button" className="secondary" disabled={pending !== null} onClick={() => void act(task, 'cancel')}>{pending === task.id ? '正在处理…' : '取消任务'}</button>}{task.status === 'FAILED' && <button type="button" className="secondary" disabled={pending !== null || !task.retry_allowed || cooldown > 0} onClick={() => void act(task, 'retry')}>{pending === task.id ? '正在处理…' : '重试任务'}</button>}</div>
+          <div className="task-actions"><button className="secondary" type="button" disabled={pending !== null} onClick={() => void removeTask(task)}>删除任务</button><button className="secondary" type="button" onClick={() => setConsentTask(current => current === task.id ? null : task.id)}>排障授权</button>{task.status === 'SUCCEEDED' && <button className="secondary" type="button" onClick={() => setSelectedTask(current => current === task.id ? null : task.id)} aria-expanded={selectedTask === task.id}>{selectedTask === task.id ? '收起结果' : '查看结果'}</button>}{(task.status === 'QUEUED' || task.status === 'PROCESSING') && <button type="button" className="secondary" disabled={pending !== null} onClick={() => void act(task, 'cancel')}>{pending === task.id ? '正在处理…' : '取消任务'}</button>}{task.status === 'FAILED' && <button type="button" className="secondary" disabled={pending !== null || !task.retry_allowed || cooldown > 0} onClick={() => void act(task, 'retry')}>{pending === task.id ? '正在处理…' : '重试任务'}</button>}</div>
+          {consentTask === task.id && <ConsentPanel taskId={task.id} csrfToken={csrfToken} onExpired={onExpired} />}
+          {selectedTask === task.id && task.status === 'SUCCEEDED' && <ResultPanel key={task.id} taskId={task.id} onExpired={onExpired} />}
         </li>
       })}</ul>}
+      <DeletionPanel refreshVersion={deletionRefresh} onExpired={onExpired} />
       <div className="task-pagination"><button type="button" className="secondary" onClick={() => setOffset(Math.max(0, offset - 20))} disabled={offset === 0 || pending !== null}>上一页</button><span>第 {offset / 20 + 1} 页</span><button type="button" className="secondary" onClick={() => setOffset(offset + 20)} disabled={tasks.length < 20 || pending !== null}>下一页</button></div>
     </section>
   )

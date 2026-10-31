@@ -19,10 +19,11 @@ def _owner(worker_id):
         raise ValueError('Invalid worker identifier')
 
 def assert_fence(task,user,generation,worker_id,now):
+    from app.deletion_control import blocked
     if (task['status']!='PROCESSING' or task['lease_generation']!=generation
         or worker_id is not None and task['lease_owner']!=worker_id
         or task['lease_expires_at'] is None or task['lease_expires_at']<=now
-        or task['deletion_requested_at'] or task['deleted_at'] or user['disabled_at']):
+        or task['deletion_requested_at'] or task['deleted_at'] or user['disabled_at'] or blocked(task['id'])):
         raise HTTPException(409,'任务租约已失效，禁止写入。')
 
 def _event(c,t,worker_id,kind,reason,now,related=None):
@@ -79,6 +80,8 @@ def claim_next(worker_id):
         rows=c.execute("SELECT id,user_id FROM tasks WHERE status='QUEUED' AND deletion_requested_at IS NULL AND deleted_at IS NULL ORDER BY submitted_at,user_id,id").fetchall()
         bypassed=[];blocked_users=set()
         for row in rows:
+            from app.deletion_control import blocked
+            if blocked(row['id']): continue
             if row['user_id'] in blocked_users: continue
             u=tasks._user(c,row['user_id'])
             t=c.execute('SELECT * FROM tasks WHERE id=%s FOR UPDATE',(row['id'],)).fetchone()

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import ImportForm from './ImportForm'
 import TaskPanel from './TaskPanel'
+import AdminPanel from './AdminPanel'
 
 type Health = 'checking' | 'healthy' | 'unavailable'
 type Mode = 'login' | 'register'
@@ -153,7 +154,7 @@ export default function App() {
         <section className="panel" aria-labelledby="app-title">
           <span className="eyebrow">你的视频，清晰整理</span>
           <h1 id="app-title">{session ? '欢迎回来' : '开启你的私有空间'}</h1>
-          <p className="intro">{session ? '账户已登录。导入视频并完成校验，准备后续内容总结。' : '使用邮箱和密码登录，管理属于你的视频与处理结果。'}</p>
+          <p className="intro">{session ? '导入视频，查看处理进度、双语摘要与历史结果。' : '使用邮箱和密码登录，管理属于你的视频与处理结果。'}</p>
           {error && <p className="message error" role="alert">{error}</p>}
           {notice && <p className="message notice" role="status">{notice}</p>}
           {checkingSession ? <p role="status" className="checking">正在确认登录状态…</p> : session ? (
@@ -163,8 +164,10 @@ export default function App() {
               <div className="account-details"><strong>{session.user.email}</strong><span>{session.user.role === 'ADMIN' ? '管理员账户' : '个人账户'}</span></div>
               <button type="button" className="secondary" onClick={() => void logout()} disabled={busy}>{busy ? '正在退出…' : '退出登录'}</button>
             </div>
+            <p className="message notice">当前为离线流程验证模式：上传后生成带标识的演示摘要，不调用真实模型，也不代表视频内容分析结果。</p>
             <ImportForm key={session.user.id} csrfToken={session.csrf_token} onExpired={expireSession} onImported={importedVideo} />
             <TaskPanel key={`tasks-${session.user.id}`} csrfToken={session.csrf_token} refreshVersion={taskRefresh} onExpired={expireSession} />
+            {session.user.role === 'ADMIN' && <AdminPanel key={`admin-${session.user.id}`} csrfToken={session.csrf_token} onExpired={expireSession} />}
             </>
           ) : (
             <>

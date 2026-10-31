@@ -49,6 +49,8 @@ services:
       IMPORT_DOWNLOAD_TIMEOUT_SECONDS: ${IMPORT_DOWNLOAD_TIMEOUT_SECONDS:-1800}
       MEDIA_PROBE_TIMEOUT_SECONDS: ${MEDIA_PROBE_TIMEOUT_SECONDS:-30}
       MEDIA_DECODE_TIMEOUT_SECONDS: ${MEDIA_DECODE_TIMEOUT_SECONDS:-3600}
+      DELETION_JOURNAL_DIR: /var/lib/video-summary-app/deletion-control
+      BACKUP_INVENTORY_CONFIRMED: ${BACKUP_INVENTORY_CONFIRMED:-false}
       MODEL_CALLS_ENABLED: "false"
       QUEUE_GLOBAL_CONCURRENCY: ${QUEUE_GLOBAL_CONCURRENCY:-1}
       WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-120}
@@ -66,6 +68,7 @@ services:
       AUTH_BLOCK_SECONDS: ${AUTH_BLOCK_SECONDS:-900}
     volumes:
       - input-staging:/var/lib/video-summary-app/staging
+      - deletion-control:/var/lib/video-summary-app/deletion-control
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -89,6 +92,21 @@ services:
     environment:
       DATABASE_URL: postgresql://${PG_USER:?set PG_USER}:${PG_PASSWORD:?set PG_PASSWORD}@db:5432/${PG_DB:?set PG_DB}
       S3_ENDPOINT_URL: http://object-store:9000
+      S3_ACCESS_KEY: ${OBJECT_ACCESS_KEY:?set OBJECT_ACCESS_KEY}
+      S3_SECRET_KEY: ${OBJECT_SECRET_KEY:?set OBJECT_SECRET_KEY}
+      S3_BUCKET: video-summary-private
+      PROCESSING_WORK_DIR: /var/lib/video-summary-app/processing
+      PREPROCESS_FRAME_INTERVAL_SECONDS: ${PREPROCESS_FRAME_INTERVAL_SECONDS:-10}
+      PREPROCESS_FRAME_WIDTH: ${PREPROCESS_FRAME_WIDTH:-768}
+      PREPROCESS_TIMEOUT_SECONDS: ${PREPROCESS_TIMEOUT_SECONDS:-3600}
+      MODEL_ADAPTER_TIMEOUT_SECONDS: ${MODEL_ADAPTER_TIMEOUT_SECONDS:-120}
+      CLEANUP_ENABLED: "true"
+      CLEANUP_POLL_SECONDS: ${CLEANUP_POLL_SECONDS:-5}
+      CLEANUP_RETRY_SECONDS: ${CLEANUP_RETRY_SECONDS:-60}
+      WORKER_PROCESSOR_MODE: ${WORKER_PROCESSOR_MODE:-offline}
+      OUTPUT_REPAIR_ATTEMPTS: ${OUTPUT_REPAIR_ATTEMPTS:-1}
+      DELETION_JOURNAL_DIR: /var/lib/video-summary-app/deletion-control
+      BACKUP_INVENTORY_CONFIRMED: ${BACKUP_INVENTORY_CONFIRMED:-false}
       MODEL_CALLS_ENABLED: "false"
       QUEUE_GLOBAL_CONCURRENCY: ${QUEUE_GLOBAL_CONCURRENCY:-1}
       WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-120}
@@ -96,6 +114,9 @@ services:
       WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-1}
       WORKER_SHUTDOWN_SECONDS: ${WORKER_SHUTDOWN_SECONDS:-5}
       TASK_DB_TIMEOUT_SECONDS: ${TASK_DB_TIMEOUT_SECONDS:-5}
+    volumes:
+      - worker-processing:/var/lib/video-summary-app/processing
+      - deletion-control:/var/lib/video-summary-app/deletion-control
     depends_on:
       db:
         condition: service_healthy
@@ -113,6 +134,8 @@ volumes:
   postgres-data:
   object-data:
   input-staging:
+  worker-processing:
+  deletion-control:
 
 networks:
   private: {}

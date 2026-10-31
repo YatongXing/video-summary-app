@@ -1,7 +1,7 @@
 """Independent queue worker with lease fencing and an injectable processor.
 
-The runtime has no media/model processor until S3-07. Without one it only
-performs expired-lease recovery and never claims or charges queued tasks.
+An explicitly selected offline processor completes the application loop using
+synthetic outputs. Disabled mode only performs recovery, without task claims.
 """
 from __future__ import annotations
 
@@ -112,10 +112,15 @@ def run(stop_event: threading.Event, interval_seconds: float = 1.0,
     if not worker_id or len(worker_id) > 128:
         raise ValueError('Invalid worker identifier')
     logger.info('Worker started; processor configured=%s', processor is not None)
+    next_workspace_cleanup = 0.0
     while not stop_event.is_set():
         try:
             if os.environ.get('DATABASE_URL'):
                 task_queue.recover_expired()
+                if os.environ.get('PROCESSING_WORK_DIR') and time.monotonic() >= next_workspace_cleanup:
+                    from app.processing import recover_workspaces
+                    recover_workspaces()
+                    next_workspace_cleanup = time.monotonic() + 60
             if processor is None:
                 stop_event.wait(interval_seconds)
                 continue
@@ -176,7 +181,8 @@ def main() -> int:
     parser.add_argument('--healthcheck', action='store_true')
     args = parser.parse_args()
     if args.healthcheck:
-        return 0 if database_ready() and object_store_ready() else 1
+        from app.deletion_control import identity_ready
+        return 0 if database_ready() and object_store_ready() and identity_ready() else 1
     if not os.environ.get('DATABASE_URL') or not os.environ.get('S3_ENDPOINT_URL'):
         logger.error('DATABASE_URL and S3_ENDPOINT_URL are required')
         return 1
@@ -186,11 +192,40 @@ def main() -> int:
         stop_event.set()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    maintenance = None
     try:
-        run(stop_event, interval_seconds=os.getenv('WORKER_POLL_SECONDS', '1'))
-    except ValueError:
-        logger.error('Invalid worker configuration')
+        from app.deletion_control import replay_journal, prune_journal
+        replay_journal()
+        if os.getenv('CLEANUP_ENABLED', 'false').lower() == 'true':
+            from app.cleanup import run_once
+            interval = _positive_seconds(os.getenv('CLEANUP_POLL_SECONDS', '5'), 'Cleanup poll')
+            def maintain():
+                while not stop_event.is_set():
+                    try:
+                        run_once()
+                        prune_journal()
+                    except Exception:
+                        logger.warning('Cleanup remains pending; retrying after poll interval')
+                    stop_event.wait(interval)
+            maintenance = threading.Thread(target=maintain, name='task-cleanup', daemon=True)
+            maintenance.start()
+        mode = os.getenv('WORKER_PROCESSOR_MODE', 'disabled')
+        if mode not in ('disabled', 'offline'):
+            raise ValueError('Unsupported processor mode')
+        if os.getenv('MODEL_CALLS_ENABLED', 'false').lower() != 'false':
+            raise ValueError('External model calls are not enabled in this work package')
+        processor = None
+        if mode == 'offline':
+            from app.pipeline import run_pipeline
+            processor = run_pipeline
+        run(stop_event, interval_seconds=os.getenv('WORKER_POLL_SECONDS', '1'), processor=processor)
+    except (ValueError, RuntimeError):
+        logger.error('Worker configuration or deletion control is unavailable')
         return 2
+    finally:
+        stop_event.set()
+        if maintenance is not None:
+            maintenance.join(timeout=5)
     return 0
 
 

@@ -76,6 +76,8 @@ def recover_staging():
 
 @asynccontextmanager
 async def lifespan(_app):
+    from app.deletion_control import replay_journal
+    await run_in_threadpool(replay_journal)
     async def loop():
         while True:
             try: await run_in_threadpool(recover_staging)
