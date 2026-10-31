@@ -230,7 +230,8 @@ def logout(response: Response, user: Principal = Depends(mutation_user)):
 
 def task_for_owner(connection, task_id: UUID, user: Principal):
     row = connection.execute('SELECT * FROM tasks WHERE id=%s AND user_id=%s AND deletion_requested_at IS NULL AND deleted_at IS NULL FOR UPDATE', (task_id, user.id)).fetchone()
-    if row is None:
+    from app.deletion_control import blocked
+    if row is None or blocked(task_id):
         raise HTTPException(404, 'Task not found')
     return row
 
@@ -239,6 +240,13 @@ def task_for_owner(connection, task_id: UUID, user: Principal):
 def task_metadata(task_id: UUID, user: Principal = Depends(current_user)):
     from app.tasks import get_task
     return get_task(task_id, user.id)
+
+
+@router.get('/tasks/{task_id}/consents')
+def list_consents(task_id: UUID, user: Principal = Depends(current_user)):
+    with connect() as connection:
+        task_for_owner(connection, task_id, user)
+        return connection.execute('SELECT id,purpose,access_scope,granted_at,revoked_at FROM task_consents WHERE task_id=%s AND user_id=%s ORDER BY granted_at DESC,id', (task_id,user.id)).fetchall()
 
 
 @router.post('/tasks/{task_id}/consents', status_code=201)
@@ -265,10 +273,21 @@ def admin_tasks(user_id: UUID | None = None, limit: int = Query(50, ge=1, le=100
     if user.role != 'ADMIN':
         raise HTTPException(403, 'Administrator required')
     with connect() as connection:
-        return connection.execute('''SELECT t.id,t.user_id,t.status,t.submitted_at,t.started_at,t.finished_at,
-            t.failure_category,t.failure_code,t.retry_count,u.credits_available
-            FROM tasks t JOIN users u ON u.id=t.user_id WHERE t.deletion_requested_at IS NULL
+        rows=connection.execute('''SELECT t.id,t.user_id,t.status,t.created_at,t.submitted_at,t.started_at,t.finished_at,
+            t.failure_category,t.failure_code,t.retry_count,u.credits_available,u.role,
+            EXTRACT(EPOCH FROM(COALESCE(t.started_at,t.finished_at,now())-GREATEST(t.submitted_at,COALESCE((SELECT max(r.accepted_at) FROM retry_events r WHERE r.task_id=t.id),t.submitted_at)))) AS queue_seconds,
+            CASE WHEN t.started_at IS NOT NULL THEN EXTRACT(EPOCH FROM(COALESCE(t.finished_at,now())-t.started_at)) END AS processing_seconds
+            FROM tasks t JOIN users u ON u.id=t.user_id WHERE t.deletion_requested_at IS NULL AND t.deleted_at IS NULL
             AND (%s::uuid IS NULL OR t.user_id=%s) ORDER BY t.submitted_at,t.user_id,t.id LIMIT %s OFFSET %s''', (user_id, user_id, limit, offset)).fetchall()
+        for row in rows:
+            row['queue_seconds']=max(0,float(row['queue_seconds']))
+            if row['processing_seconds'] is not None: row['processing_seconds']=max(0,float(row['processing_seconds']))
+            row['quota_unlimited']=row.pop('role')=='ADMIN'
+            if row['quota_unlimited']: row['credits_available']=None
+            row['retry_records']=connection.execute('SELECT source,accepted_at,cooldown_triggered FROM retry_events WHERE task_id=%s ORDER BY accepted_at,id',(row['id'],)).fetchall()
+            row['quota_events']=connection.execute('SELECT event_type,delta,created_at FROM quota_events WHERE task_id=%s ORDER BY created_at,id',(row['id'],)).fetchall()
+            row['model_calls']=connection.execute('SELECT status,model_version,adapter_version,prompt_version,input_tokens,output_tokens,cached_tokens,estimated_cost,currency,error_category,created_at,finished_at FROM model_calls WHERE task_id=%s ORDER BY created_at,id',(row['id'],)).fetchall()
+        return rows
 
 
 def authorize_task_content(user: Principal, task_id: UUID, purpose: str, access_scope: str):
@@ -283,7 +302,8 @@ def authorize_task_content(user: Principal, task_id: UUID, purpose: str, access_
         task = connection.execute('SELECT * FROM tasks WHERE id=%s FOR UPDATE', (task_id,)).fetchone()
         if task is None:
             raise HTTPException(404, 'Task not found')
-        exists = not task['deletion_requested_at'] and not task['deleted_at']
+        from app.deletion_control import blocked
+        exists = not task['deletion_requested_at'] and not task['deleted_at'] and not blocked(task_id)
         if user.id == task['user_id'] and exists:
             return task
         if active['role'] == 'ADMIN':

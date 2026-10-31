@@ -10,7 +10,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 
-RUN useradd --system --create-home appuser && mkdir -p /var/lib/video-summary-app/staging && chown -R appuser:appuser /var/lib/video-summary-app
+RUN useradd --system --create-home appuser && mkdir -p /var/lib/video-summary-app/staging /var/lib/video-summary-app/processing /var/lib/video-summary-app/deletion-control && chown -R appuser:appuser /var/lib/video-summary-app
 USER appuser
 
 EXPOSE 8000

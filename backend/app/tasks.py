@@ -34,7 +34,8 @@ def _user(c, user_id):
 
 def _task(c,task_id,user_id):
     row=c.execute('SELECT * FROM tasks WHERE id=%s AND user_id=%s FOR UPDATE',(task_id,user_id)).fetchone()
-    if row is None or row['deletion_requested_at'] or row['deleted_at']:
+    from app.deletion_control import blocked
+    if row is None or row['deletion_requested_at'] or row['deleted_at'] or blocked(task_id):
         raise HTTPException(404,'任务不存在。')
     return row
 
@@ -83,13 +84,20 @@ def _metadata(c,t,u,now):
     cooldown=max(0,math.ceil((t['cooldown_until']-now).total_seconds())) if t['cooldown_until'] else 0
     reason='TERMINAL' if t['status'] in ('SUCCEEDED','CANCELLED') else 'NOT_FAILED' if t['status']!='FAILED' else 'RETRY_LIMIT' if t['retry_count']>=20 else 'COOLDOWN' if cooldown else None
     events={r['event_type'] for r in c.execute('SELECT event_type FROM quota_events WHERE task_id=%s',(t['id'],)).fetchall()}
+    latest_retry=c.execute('SELECT max(accepted_at) AS at FROM retry_events WHERE task_id=%s',(t['id'],)).fetchone()['at']
+    queued_at=max(t['submitted_at'],latest_retry) if latest_retry else t['submitted_at']
     refund='UNLIMITED' if u['role']=='ADMIN' else 'REFUNDED' if 'REFUND' in events else 'CHARGED' if 'SPEND' in events else 'NOT_CHARGED'
     return {'id':str(t['id']),'status':t['status'],'filename':t['display_filename'],
             'created_at':t['created_at'],'submitted_at':t['submitted_at'],'started_at':t['started_at'],'finished_at':t['finished_at'],
             'retry_count':t['retry_count'],'cooldown_seconds':cooldown,'retry_allowed':reason is None,'retry_reason':reason,
             'failure_category':t['failure_category'],'failure_code':t['failure_code'],'refund_status':refund,
             'api_fee_warning':t['timeout_retry_count']>=4,'generation':t['lease_generation'],
-            'lease_owner':t['lease_owner'],'lease_expires_at':t['lease_expires_at']}
+            'lease_owner':t['lease_owner'],'lease_expires_at':t['lease_expires_at'],
+            'duration_seconds':float(t['duration_seconds']) if t['duration_seconds'] is not None else None,
+            'queue_seconds':max(0,((t['started_at'] or (t['finished_at'] if t['status'] in ('FAILED','CANCELLED') else now))-queued_at).total_seconds()),
+            'processing_seconds':max(0,((t['finished_at'] or now)-t['started_at']).total_seconds()) if t['started_at'] else 0,
+            'progress_percent':100 if t['status']=='SUCCEEDED' else 0 if t['status']=='QUEUED' else None,
+            'target_seconds':1200 if t['duration_seconds'] is not None and float(t['duration_seconds'])==3600 else None}
 
 def get_task(task_id,user_id):
     with connect() as c:
@@ -101,7 +109,8 @@ def list_tasks(user_id,limit=50,offset=0):
     with connect() as c:
         u=_user(c,user_id);now=utcnow()
         rows=c.execute('SELECT * FROM tasks WHERE user_id=%s AND deletion_requested_at IS NULL AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s',(user_id,limit,offset)).fetchall()
-        return [_metadata(c,t,u,now) for t in rows]
+        from app.deletion_control import blocked
+        return [_metadata(c,t,u,now) for t in rows if not blocked(t['id'])]
 
 def cancel_task(task_id,user_id):
     with connect() as c:

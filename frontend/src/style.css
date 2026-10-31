@@ -87,3 +87,30 @@ progress { width: 100%; height: 8px; accent-color: #247b6d; }
 .task-actions { display: flex; gap: 8px; margin-top: 13px; }
 .task-actions:empty { display: none; }
 .empty-tasks { padding: 16px; background: #f7faf8; border-radius: 10px; color: #73847b; font-size: .85rem; }
+
+.task-progress { display: grid; gap: 7px; margin-top: 12px; font-size: .77rem; line-height: 1.6; }
+.result-panel { margin-top: 18px; border-top: 1px solid #e0e8e6; padding-top: 18px; overflow-wrap: anywhere; }
+.result-panel h3 { color: #24463c; font-size: .95rem; margin: 20px 0 9px; }
+.result-panel li { margin-bottom: 8px; line-height: 1.7; }
+.result-panel video { display: block; width: 100%; max-height: 360px; background: #18241f; margin-top: 14px; border-radius: 8px; }
+.result-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+select { border: 1px solid #d8e1dd; border-radius: 6px; padding: 7px; color: #24463c; background: #fff; }
+.summary-text { white-space: pre-wrap; line-height: 1.8; }
+.timeline { padding-left: 22px; }
+.timestamp { color: #226e61; background: #edf5f1; border: 0; padding: 4px 7px; border-radius: 5px; font-variant-numeric: tabular-nums; }
+.timestamp:hover { text-decoration: underline; }
+.admin-filter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+.admin-filter label { width: 100%; }
+.admin-filter input { flex: 1; min-width: 180px; }
+.admin-group h3 { font-size: .85rem; overflow-wrap: anywhere; margin-top: 24px; }
+.metadata { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; }
+.metadata dt { color: #73847b; }
+.metadata dd { margin: 0; overflow-wrap: anywhere; }
+.identifier { overflow-wrap: anywhere; }
+.admin-group pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .72rem; }
+.admin-group summary { cursor: pointer; }
+
+.deletion-panel, .consent-panel { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #dce5ec; }
+.consent-panel form { display: grid; gap: .75rem; }
+.consent-panel li { margin: .75rem 0; }
+.admin-group video { width: 100%; max-height: 28rem; }
