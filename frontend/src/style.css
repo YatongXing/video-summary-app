@@ -110,7 +110,11 @@ select { border: 1px solid #d8e1dd; border-radius: 6px; padding: 7px; color: #24
 .admin-group pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .72rem; }
 .admin-group summary { cursor: pointer; }
 
-.deletion-panel, .consent-panel { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #dce5ec; }
-.consent-panel form { display: grid; gap: .75rem; }
-.consent-panel li { margin: .75rem 0; }
-.admin-group video { width: 100%; max-height: 28rem; }
+.task-identifier { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:10px 0; min-width:0; }
+.task-identifier > span { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.task-identifier code { user-select:all; font-size:.78rem; }
+.task-identifier .field-help { width:100%; }
+.feedback-footer { margin:20px 0 0; text-align:center; font-size:.8rem; line-height:1.8; color:#65746f; overflow-wrap:anywhere; }
+.feedback-footer a { color:#226e61; }
+.task-actions { flex-wrap:wrap; }
+@media (max-width:400px) { .task-identifier { align-items:flex-start; } .admin-filter input { min-width:0; flex-basis:100%; } .metadata { gap:8px; grid-template-columns:minmax(0,auto) minmax(0,1fr); } }

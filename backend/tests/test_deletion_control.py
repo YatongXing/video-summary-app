@@ -37,7 +37,7 @@ def test_restore_force_rechecks_deleted_assets_without_publishing_task(cleanup_d
     aid=asset(db,uid,tid,'ORIGINAL','originals/'+uuid4().hex)
     cleanup.request_delete(tid,uid)
     db.execute("UPDATE media_assets SET cleanup_state='DELETED',deleted_at=now() WHERE id=%s",(aid,))
-    db.execute("UPDATE cleanup_jobs SET status='COMPLETED',completed_at=now() WHERE task_id=%s",(tid,))
+    db.execute("UPDATE cleanup_jobs SET job_version=job_version+1,status='COMPLETED',online_completed_at=now(),completed_at=now() WHERE task_id=%s",(tid,))
     db.execute('UPDATE tasks SET deleted_at=now() WHERE id=%s',(tid,))
     assert deletion_control.replay_journal(force=True)==[str(tid)]
     assert db.execute('SELECT cleanup_state FROM media_assets WHERE id=%s',(aid,)).fetchone()[0]=='REGISTERED'
@@ -71,6 +71,7 @@ def test_corrupt_journal_does_not_silently_skip_control(cleanup_db):
 def test_unknown_backup_inventory_stays_pending(cleanup_db,monkeypatch):
     from app import cleanup,deletion_control
     db=cleanup_db;uid,tid=queued(db);cleanup.request_delete(tid,uid)
+    asset(db,uid,tid,'BACKUP','backups/'+uuid4().hex)
     monkeypatch.delenv('BACKUP_INVENTORY_CONFIRMED',raising=False)
     assert deletion_control.cleanup_backups(tid)=='PENDING'
 
@@ -80,18 +81,25 @@ def test_backup_object_still_present_never_marked_complete(cleanup_db,monkeypatc
     db=cleanup_db;uid,tid=queued(db);cleanup.request_delete(tid,uid)
     aid=asset(db,uid,tid,'BACKUP','backups/'+uuid4().hex)
     class Storage:
+        def list_multipart_uploads(self,**kwargs):return {'Uploads':[]}
+        def head_bucket(self,**kwargs):pass
+        def get_bucket_versioning(self,**kwargs):return {}
         def delete_object(self,**kwargs):pass
         def head_object(self,**kwargs):return {'ContentLength':1}
     monkeypatch.setattr(object_store,'client',lambda:Storage())
-    monkeypatch.setattr(object_store,'bucket',lambda:'synthetic')
+    monkeypatch.setattr(object_store,'cleanup_client',lambda:Storage())
+    db.execute('UPDATE media_assets SET cleanup_approved_at=now() WHERE id=%s',(aid,))
+    monkeypatch.setattr(object_store,'bucket',lambda:'synthetic-private')
     monkeypatch.setenv('BACKUP_INVENTORY_CONFIRMED','true')
-    assert deletion_control.cleanup_backups(tid)=='FAILED'
-    assert db.execute('SELECT cleanup_state FROM media_assets WHERE id=%s',(aid,)).fetchone()[0]=='FAILED'
+    assert deletion_control.cleanup_backups(tid)=='PENDING'
+    assert db.execute('SELECT cleanup_state FROM media_assets WHERE id=%s',(aid,)).fetchone()[0]!='DELETED'
+    assert job(db,tid)[1]=='RETRY_WAIT'
 
 
 def test_unverified_backup_at_thirty_days_raises_persistent_alert(cleanup_db):
     from app import cleanup
     db=cleanup_db;uid,tid=queued(db);cleanup.request_delete(tid,uid)
-    db.execute("UPDATE cleanup_jobs SET started_at=now()-interval '31 days' WHERE task_id=%s",(tid,))
+    asset(db,uid,tid,'BACKUP','backups/'+uuid4().hex)
+    db.execute("UPDATE cleanup_jobs SET job_version=job_version+1,started_at=now()-interval '31 days' WHERE task_id=%s",(tid,))
     cleanup.run_once()
-    assert db.execute("SELECT count(*) FROM cleanup_alerts WHERE task_id=%s AND alert_code='BACKUP_CLEANUP_UNVERIFIED' AND resolved_at IS NULL",(tid,)).fetchone()[0]==1
+    assert db.execute("SELECT count(*) FROM cleanup_alerts WHERE task_id=%s AND alert_code='LEGACY_APPROVAL' AND resolved_at IS NULL",(tid,)).fetchone()[0]==1

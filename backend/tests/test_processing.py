@@ -26,10 +26,16 @@ def bridge(monkeypatch,tmp_path):
         monkeypatch.setenv('DATABASE_URL',scoped)
         monkeypatch.setenv('PROCESSING_WORK_DIR',str(tmp_path/'processing'))
         monkeypatch.setenv('WORKER_LEASE_SECONDS','3600')
+        monkeypatch.setenv('DELETION_JOURNAL_DIR',str(tmp_path/'journal'))
         from app.migrate import run_migrations
         try:
             with psycopg.connect(scoped,autocommit=True) as db:
                 run_migrations(db)
+                import json
+                from app.deletion_control import initialize
+                initialize()
+                runtime=Path(os.environ['DELETION_JOURNAL_DIR'])/'runtime';runtime.mkdir(exist_ok=True)
+                (runtime/'producer-ready').write_text(json.dumps({'deployment_id':str(db.execute('SELECT deployment_id FROM deletion_control_state').fetchone()[0])}))
                 uid=db.execute("INSERT INTO users(email_normalized,password_hash) VALUES ('private@example.invalid','synthetic-hash') RETURNING id").fetchone()[0]
                 tid=db.execute("INSERT INTO tasks(user_id,input_kind,display_filename) VALUES (%s,'LOCAL','private-name.mp4') RETURNING id",(uid,)).fetchone()[0]
                 db.execute("INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key) VALUES (%s,%s,'ORIGINAL','private-object-key')",(tid,uid))

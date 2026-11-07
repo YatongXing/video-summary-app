@@ -117,8 +117,8 @@ def test_anonymous_cross_user_and_deleted_task_access(auth_db):
             assert (await owner.get(f"/tasks/{task}")).status_code == 200
             assert (await other.get(f"/tasks/{task}")).status_code in (403, 404)
             assert (await other.get("/admin/tasks")).status_code == 403
-            blocked = await other.post(f"/tasks/{task}/consents", json={"purpose": "debug", "access_scope": "video"}, headers={"X-CSRF-Token": other_login["csrf_token"]})
-            assert blocked.status_code in (403, 404)
+            blocked = await other.post(f"/tasks/{task}/support-requests", json={"operation":"CREATE","scope":"video","expected_version":0}, headers={"X-CSRF-Token": other_login["csrf_token"]})
+            assert blocked.status_code == 410
             auth_db.execute("UPDATE tasks SET deletion_requested_at=now() WHERE id=%s", (task,))
             assert (await owner.get(f"/tasks/{task}")).status_code in (403, 404)
     asyncio.run(scenario())
@@ -170,50 +170,26 @@ def test_disabled_user_loses_existing_session_and_cannot_login(auth_db):
     asyncio.run(scenario())
 
 
-def test_admin_content_requires_exact_current_consent_and_audit(auth_db):
-    from app.auth import Principal, authorize_task_content
-    from fastapi import HTTPException
-
+def test_retired_admin_content_preserves_metadata_and_csrf(auth_db):
     async def scenario():
         async with client("127.0.0.4") as owner, client("127.0.0.5") as admin:
-            user = await register(owner)
-            administrator = await register(admin, "admin@example.invalid")
-            auth_db.execute("UPDATE users SET role='ADMIN' WHERE id=%s", (administrator["id"],))
-            task = auth_db.execute("INSERT INTO tasks(user_id,input_kind) VALUES (%s,'LOCAL') RETURNING id",
-                                   (user["id"],)).fetchone()[0]
-            owner_login = (await login(owner)).json()
-            await login(admin, "admin@example.invalid")
-            session_id = auth_db.execute("SELECT id FROM sessions WHERE user_id=%s", (administrator["id"],)).fetchone()[0]
-            from uuid import UUID
-            principal = Principal(UUID(administrator["id"]), administrator["email"], "ADMIN", session_id)
-            assert (await admin.get("/admin/tasks")).status_code == 200
-            metadata = (await admin.get("/admin/tasks")).json()
-            assert str(task) in str(metadata)
-            assert "storage_key" not in str(metadata) and "password_hash" not in str(metadata)
-            with pytest.raises(HTTPException) as denied:
-                authorize_task_content(principal, task, "debug playback", "video")
-            assert denied.value.status_code == 403
-            body = {"purpose": "debug playback", "access_scope": "video"}
-            assert (await owner.post(f"/tasks/{task}/consents", json=body)).status_code == 403
-            headers = {"X-CSRF-Token": owner_login["csrf_token"]}
-            granted = await owner.post(f"/tasks/{task}/consents", json=body, headers=headers)
-            assert granted.status_code == 201, granted.text
-            assert authorize_task_content(principal, task, "debug playback", "video")["id"] == task
-            with pytest.raises(HTTPException):
-                authorize_task_content(principal, task, "other purpose", "video")
-            with pytest.raises(HTTPException):
-                authorize_task_content(principal, task, "debug playback", "summary")
-            revoked = await owner.delete(f"/tasks/{task}/consents/{granted.json()['id']}", headers=headers)
-            assert revoked.status_code == 204
-            with pytest.raises(HTTPException):
-                authorize_task_content(principal, task, "debug playback", "video")
-            auth_db.execute("UPDATE tasks SET deletion_requested_at=now() WHERE id=%s", (task,))
-            with pytest.raises(HTTPException):
-                authorize_task_content(principal, task, "debug playback", "video")
-            results = auth_db.execute("SELECT result FROM audit_events WHERE task_id=%s ORDER BY created_at", (task,)).fetchall()
-            assert [row[0] for row in results] == ["DENIED", "ALLOWED", "DENIED", "DENIED", "DENIED", "DENIED"]
-            reasons = auth_db.execute("SELECT reason_code FROM audit_events WHERE task_id=%s", (task,)).fetchall()
-            assert {row[0] for row in reasons} == {"debug playback", "other purpose"}
+            user=await register(owner)
+            administrator=await register(admin,"admin@example.invalid")
+            auth_db.execute("UPDATE users SET role='ADMIN' WHERE id=%s",(administrator["id"],))
+            task=auth_db.execute("INSERT INTO tasks(user_id,input_kind) VALUES(%s,'LOCAL') RETURNING id",(user["id"],)).fetchone()[0]
+            owner_login=(await login(owner)).json();await login(admin,"admin@example.invalid")
+            metadata=await admin.get("/admin/tasks")
+            assert metadata.status_code==200
+            assert "storage_key" not in metadata.text and "password_hash" not in metadata.text
+            assert (await admin.get(f"/admin/tasks/{task}/video?purpose=old")).status_code==410
+            body={"operation":"CREATE","scope":"video","expected_version":0}
+            assert (await owner.post(f"/tasks/{task}/support-requests",json=body)).status_code==403
+            h={"X-CSRF-Token":owner_login["csrf_token"]}
+            grant=await owner.post(f"/tasks/{task}/support-requests",json=body,headers=h)
+            assert grant.status_code==410,grant.text
+            assert (await admin.get(f"/tasks/{task}/result")).status_code==404
+            assert auth_db.execute("SELECT count(*) FROM support_requests WHERE task_id=%s",(task,)).fetchone()==(0,)
+            assert (await admin.get("/admin/support-requests")).status_code==410
     asyncio.run(scenario())
 
 

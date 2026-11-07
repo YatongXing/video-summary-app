@@ -1,0 +1,136 @@
+{
+  "scope": "CR002 acceptance adjustments; owner duplicate ID removal and unrestricted literal TaskID search",
+  "before_test_sha256": {
+    "backend/tests/test_cr002.py": "c016a02fb2a7bb078f520101fa9894311b8f72ff84b2f3faac181aa19c0d66ce",
+    "backend/tests/test_cr_wp06_integration.py": "40d6f16468f014d3be534e1a62eaa4ae5591abe2fda507466d8e64b28fe7a423",
+    "frontend/tests/ui-smoke.mjs": "2a1b0716b0631dae75ba3435afb829cb3c6832fc3bb04d799d334bbf46e9fb56",
+    "frontend/tests/wp06-real.mjs": "f07d32b4fb1de388cd85c482c9484f135c48f60feedb1408e18b7bc86f5591b2",
+    "frontend/tests/wp05-fixtures.mjs": "c3214e0c917bfebdf8d4a625a4856bbda89aa99a2cf9b7085a632dbf22729b26"
+  },
+  "manual_environment_policy": "Preserve existing tasks/accounts/data; only verified API restart and read-only browser checks; no seed/upload/delete",
+  "manual_api_restart": {
+    "state": "C:\\Users\\邢亚桐\\AppData\\Local\\Temp\\video-summary-wp06-5q2vqys5\\state.json",
+    "url": "http://127.0.0.1:50658",
+    "verified_id": "vsa-wp06-172ff1a984",
+    "restarted_only": "vsa-wp06-172ff1a984-api",
+    "before": {
+      "vsa-wp06-172ff1a984-db": {
+        "id": "b9d9ea067fb84f5df1bb68fa8fb99b48bc3090be60546a59321be11ec9917fae",
+        "started_at": "2026-11-06T11:42:40.758639142Z"
+      },
+      "vsa-wp06-172ff1a984-s3": {
+        "id": "3ef79905479f4f2324fb09ed83b75f33d88a6eb1387d86136d11dd1742c26195",
+        "started_at": "2026-11-06T11:42:43.868954056Z"
+      },
+      "vsa-wp06-172ff1a984-api": {
+        "id": "ad7695c4be26e5b6e255e45b4e9d5d47c17458876300861372695c10d7770945",
+        "started_at": "2026-11-06T11:42:50.222727687Z"
+      },
+      "vsa-wp06-172ff1a984-worker1": {
+        "id": "47511ac9dd0cc5ec72fada306370a9c4c1bfcc66b649db06cc7ddb15d590f766",
+        "started_at": "2026-11-06T11:42:50.659432794Z"
+      },
+      "vsa-wp06-172ff1a984-worker2": {
+        "id": "b9058c73f07e7803292aadff28439844ef4b2a71cb071bd0f35c18f79dc0996a",
+        "started_at": "2026-11-06T11:42:51.059568048Z"
+      }
+    },
+    "after": {
+      "vsa-wp06-172ff1a984-db": {
+        "id": "b9d9ea067fb84f5df1bb68fa8fb99b48bc3090be60546a59321be11ec9917fae",
+        "started_at": "2026-11-06T11:42:40.758639142Z"
+      },
+      "vsa-wp06-172ff1a984-s3": {
+        "id": "3ef79905479f4f2324fb09ed83b75f33d88a6eb1387d86136d11dd1742c26195",
+        "started_at": "2026-11-06T11:42:43.868954056Z"
+      },
+      "vsa-wp06-172ff1a984-api": {
+        "id": "ad7695c4be26e5b6e255e45b4e9d5d47c17458876300861372695c10d7770945",
+        "started_at": "2026-11-06T12:16:39.008440654Z"
+      },
+      "vsa-wp06-172ff1a984-worker1": {
+        "id": "47511ac9dd0cc5ec72fada306370a9c4c1bfcc66b649db06cc7ddb15d590f766",
+        "started_at": "2026-11-06T11:42:50.659432794Z"
+      },
+      "vsa-wp06-172ff1a984-worker2": {
+        "id": "b9058c73f07e7803292aadff28439844ef4b2a71cb071bd0f35c18f79dc0996a",
+        "started_at": "2026-11-06T11:42:51.059568048Z"
+      }
+    },
+    "policy": "same containers and all non-API start times unchanged; no stop/seed/upload/delete/data operations"
+  },
+  "results": {
+    "targeted_backend": {
+      "files": [
+        "backend/tests/test_cr002.py",
+        "backend/tests/test_auth.py"
+      ],
+      "passed": 58,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 102.06,
+      "environment": "dedicated temporary PG17, synthetic accounts/schema; no manual DB connection"
+    },
+    "mock_browser": {
+      "groups": 14,
+      "status": "passed",
+      "browser": "Chrome156.0.8078.81",
+      "checks": [
+        "arbitrary one-character/nonhex/Unicode/percent/underscore/quote/120-character search forwarded",
+        "search result page2 clearing returns default list/page1 without submit",
+        "response.json delayed after headers cannot overwrite cleared default list",
+        "USER and ADMIN result-expanded task card has one identifier/copy group",
+        "original task states/clipboard/bilingual JSON/logout Blob isolation/metadata content isolation/footer/mobile preserved"
+      ]
+    },
+    "actual_browser_readonly": {
+      "groups": 3,
+      "status": "passed",
+      "browser": "Chrome156.0.8078.81",
+      "opened_seed_ids": [
+        "8b10e001-fe46-4e4c-a984-9d71556aee4f",
+        "8ee10940-c841-4c94-8822-e648ef500442"
+      ],
+      "checks": [
+        "USER known synthetic seed one card ID/copy with result open",
+        "ADMIN known synthetic seed one card ID/copy with result open",
+        "actual admin exact and arbitrary literal search, clearing default list"
+      ],
+      "no_actions": [
+        "upload",
+        "seed",
+        "delete",
+        "task mutation",
+        "unknown task content read",
+        "manual database access",
+        "other container restart"
+      ]
+    }
+  },
+  "cleanup": {
+    "dedicated_pg": "vsa-cr002-acceptance-4f14b787",
+    "verified_labels": {
+      "vsa.synthetic_only": "true",
+      "vsa.work_package": "CR-002-ACCEPTANCE"
+    },
+    "removed": true,
+    "remaining_acceptance_containers": [],
+    "browser_profiles": "Mock and real Chrome exited, profiles removed, mock server closed",
+    "manual_environment": "Preserved existing id/url/container IDs, volumes/network/data; API alone restarted once after ownership verification"
+  },
+  "final_test_sha256": {
+    "backend/tests/test_cr002.py": "02d7005a5d27ae4ae7414d8945e6deade05a4d043f75566ce7e8f5d40a7d3dcc",
+    "backend/tests/test_cr_wp06_integration.py": "34d9adcb885c0b76dc08d180f05ae4c81635687f8b89a2d88aece587d4053dde",
+    "frontend/tests/ui-smoke.mjs": "0c4ddac92d71f5ee9d438edda131adb8cc215411d163f2634e2befeddb595bdf",
+    "frontend/tests/wp06-real.mjs": "977a39ed2c2c39ca4cb09ae0e888e70679967c9d87a829681845718facb63b44",
+    "frontend/tests/wp05-fixtures.mjs": "a37669dddaf1c4755415055a2a902d77bd842a6888c01f035ea3742e02fcaa32",
+    "frontend/tests/acceptance-readonly.mjs": "aa55f94740970c84e47c5d4860d051078411174527eaca65500ed805f2c04fe9"
+  },
+  "scope_notes": [
+    "trim preserved: leading/trailing whitespace ignored, empty/all-whitespace restores default list",
+    "No min/UUID-format/36char input limits; arbitrary text uses literal TaskID containment; canonical UUID exact preferred",
+    "Authentication/role/CSRF/owner/deletion/search rate/deadline/page bounds unchanged",
+    "No unnecessary rerun Linux/SQL migrations/full system/provider/model/production tests",
+    "Previous CR002/WP06 reports/raw JSON/manifests preserved; this evidence is separate"
+  ]
+}

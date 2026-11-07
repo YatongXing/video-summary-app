@@ -1,5 +1,6 @@
 """Local audio/visual evidence preparation; never makes model/network requests."""
 from __future__ import annotations
+from app import maintenance
 
 from dataclasses import dataclass, field
 import json
@@ -51,6 +52,7 @@ class PreparedMedia:
 
 
 def _checkpoint(checkpoint):
+    maintenance.ensure_open()
     if checkpoint is None:
         return
     try:
@@ -69,6 +71,8 @@ def _run(command, *, checkpoint=None, timeout=3600, check=False,
         output = out if capture_output or stdout == subprocess.PIPE else stdout
         errors = err if capture_output or stderr == subprocess.PIPE else stderr
         _checkpoint(checkpoint)
+        from app.task_locks import inherited_fds
+        if os.name != 'nt':kwargs['pass_fds']=tuple(set(kwargs.get('pass_fds',())) | set(inherited_fds()))
         process = subprocess.Popen(command, stdout=output, stderr=errors, **kwargs)
         deadline = time.monotonic() + timeout
         try:

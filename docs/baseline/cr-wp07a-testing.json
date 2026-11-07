@@ -1,0 +1,404 @@
+{
+  "scope": "CR-WP07-A independent synthetic-only local verification",
+  "local_execution_dates": [
+    "2026-11-06",
+    "2026-11-07"
+  ],
+  "formal_instance_created": false,
+  "actual_final_compose": {
+    "project": "vsa-wp07a-test-compose-03c9c95c",
+    "recipe": "deploy/compose.wp07.yaml",
+    "image_ids_from_running_containers": {
+      "api": "sha256:ee6f9877f23bdfef4bc0add2dcc7283518d53b4b51ed5cabdee44d08e99b841a",
+      "workers": [
+        "sha256:ee6f9877f23bdfef4bc0add2dcc7283518d53b4b51ed5cabdee44d08e99b841a",
+        "sha256:ee6f9877f23bdfef4bc0add2dcc7283518d53b4b51ed5cabdee44d08e99b841a"
+      ],
+      "web": "sha256:e261cdecf1cd8b0b6961bc3f20ee2d976832f741d8a1ee918f3303e9aedd0043",
+      "postgresql": "sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b",
+      "rustfs": "sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2"
+    },
+    "image_to_source_sha_match": [
+      "maintenance.py",
+      "deletion_control.py",
+      "cleanup.py",
+      "tasks.py",
+      "worker.py",
+      "deployment.py",
+      "ingest.py",
+      "processing.py"
+    ],
+    "browser": "Chrome/156.0.8078.81",
+    "browser_synthetic_playback": [
+      {
+        "role": "USER",
+        "duration_seconds": 30,
+        "seek_current_seconds": 5.366387,
+        "ready_state": 4
+      },
+      {
+        "role": "ADMIN",
+        "duration_seconds": 30,
+        "seek_current_seconds": 5.366102,
+        "ready_state": 4
+      }
+    ],
+    "browser_checks": [
+      "approved UI",
+      "two-role real upload and processing",
+      "bilingual output",
+      "one task ID and copy",
+      "metadata no content actions",
+      "exact and one-character task ID",
+      "arbitrary literal and auto-clear",
+      "mobile overflow"
+    ],
+    "chrome_process_exited": true,
+    "temporary_profile_removed": true,
+    "guarded_compose_teardown_verified": true,
+    "strict_bootstrap_bad_flags_rejected": [
+      "missing",
+      "false"
+    ]
+  },
+  "real_docker_run": {
+    "project": "vsa-wp07a-test-1cb8b137e6",
+    "current_app_source_readonly_bind": true,
+    "core_actual_service_checks_passed": 9,
+    "separate_runtime_acl_retired_and_s3_head_object_check_passed": 1,
+    "test_file_receiver_only": true,
+    "periodic_monitor_config_seconds": {
+      "interval": 2,
+      "repeat": 3
+    },
+    "observed_worker_stop_fault_to_continuing_seconds": 6.514242,
+    "monitor_events": {
+      "actual_cleanup_probe_seeded_blocked_row": [
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:38.694017+00:00",
+          "event": "FAULT",
+          "faults": [
+            "CLEANUP_UNHEALTHY",
+            "PERSISTENT_CLEANUP_FAULT"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:47.220022+00:00",
+          "event": "CONTINUING",
+          "faults": [
+            "CLEANUP_UNHEALTHY",
+            "PERSISTENT_CLEANUP_FAULT"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:55.133102+00:00",
+          "event": "RECOVERED",
+          "faults": [],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        }
+      ],
+      "process_timeout_seam": [
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:55.158871+00:00",
+          "event": "FAULT",
+          "faults": [
+            "PROBE_DEADLINE"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:55.175450+00:00",
+          "event": "CONTINUING",
+          "faults": [
+            "PROBE_DEADLINE"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:56:02.967504+00:00",
+          "event": "RECOVERED",
+          "faults": [],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        }
+      ],
+      "sequential_actual_service_faults": [
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:53:12.892951+00:00",
+          "event": "FAULT",
+          "faults": [
+            "CONTROL_UNKNOWN",
+            "DATABASE_STOPPED"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:53:19.298598+00:00",
+          "event": "CONTINUING",
+          "faults": [
+            "CONTROL_UNKNOWN",
+            "DATABASE_STOPPED"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:53:24.046933+00:00",
+          "event": "FAULT",
+          "faults": [
+            "CONTROL_UNKNOWN",
+            "DATABASE_UNAVAILABLE"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:53:28.895607+00:00",
+          "event": "CONTINUING",
+          "faults": [
+            "CONTROL_UNKNOWN",
+            "DATABASE_UNAVAILABLE"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:53:36.847929+00:00",
+          "event": "RECOVERED",
+          "faults": [],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:53:55.605168+00:00",
+          "event": "FAULT",
+          "faults": [
+            "API_NOT_READY",
+            "STORAGE_STOPPED",
+            "STORAGE_UNAVAILABLE",
+            "WORKER_UNHEALTHY"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:54:12.252894+00:00",
+          "event": "CONTINUING",
+          "faults": [
+            "API_NOT_READY",
+            "STORAGE_STOPPED",
+            "STORAGE_UNAVAILABLE",
+            "WORKER_UNHEALTHY"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:54:20.520889+00:00",
+          "event": "RECOVERED",
+          "faults": [],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:54:23.051025+00:00",
+          "event": "FAULT",
+          "faults": [
+            "API_LIVENESS_FAILED",
+            "API_STOPPED",
+            "CONTROL_UNKNOWN",
+            "ENDPOINT_OWNERSHIP_MISMATCH"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:54:24.650636+00:00",
+          "event": "CONTINUING",
+          "faults": [
+            "API_LIVENESS_FAILED",
+            "API_STOPPED",
+            "CONTROL_UNKNOWN",
+            "ENDPOINT_OWNERSHIP_MISMATCH"
+          ],
+          "maintenance": "UNKNOWN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:54:32.631518+00:00",
+          "event": "RECOVERED",
+          "faults": [],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:54:39.384265+00:00",
+          "event": "FAULT",
+          "faults": [
+            "WORKER_PAUSED"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:54:47.046818+00:00",
+          "event": "RECOVERED",
+          "faults": [],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        }
+      ],
+      "actual_windows_periodic_worker_fault": [
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:01.715483+00:00",
+          "event": "FAULT",
+          "faults": [
+            "WORKER_UNHEALTHY"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:08.287754+00:00",
+          "event": "FAULT",
+          "faults": [
+            "WORKER_STOPPED"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:14.801996+00:00",
+          "event": "CONTINUING",
+          "faults": [
+            "WORKER_STOPPED"
+          ],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        },
+        {
+          "id": "vsa-wp07a-test-1cb8b137e6",
+          "at_utc": "2026-11-07T07:55:22.810338+00:00",
+          "event": "RECOVERED",
+          "faults": [],
+          "maintenance": "OPEN",
+          "channel": "LOCAL_TEST_FILE",
+          "formal_recipient_confirmed": false
+        }
+      ]
+    }
+  },
+  "regression": {
+    "final_gate_cases_passed": 21,
+    "original_late_response_test_separate_post_fix_passed": 1,
+    "historical_wp02_frozen_001_010_passed": 42,
+    "actual_linux_lock_checks_passed": 6,
+    "initial_core_and_diagnostic_rerun_each": {
+      "passed": 321,
+      "failed": 1
+    },
+    "initial_failure": "late FakeModel response did not preserve known usage until redundant audio boundary lease checks removed",
+    "case_counts_are_not_additive": true,
+    "final_core": {
+      "passed": 322,
+      "failed": 0,
+      "seconds": 163.67
+    },
+    "historical_wp02_diagnostic_full_chain": {
+      "passed": 39,
+      "failed": 3,
+      "reason": "original WP02 assertions target frozen 001–010, not full current 001–011"
+    }
+  },
+  "frozen_content": {
+    "frontend_source_match": 10,
+    "frontend_dist_match": 3,
+    "migrations_match": 11
+  },
+  "sha256": {
+    "docs/baseline/cr-wp07a-desktop.png": "78e65d0c680a206b45c621eb623e3de1b0df2c44c7597d50ecb4197f3def19bd",
+    "docs/baseline/cr-wp07a-mobile.png": "9b3c195fc9fd232cfdf5f924b05bde35af0aa8fa75255086459f7bfc296c6dad",
+    "frontend/tests/wp07a-real.mjs": "2912692d2b385e6da69f4e20cf40755275ebcfb370f49f83b1ce0a8bcdc65648",
+    "backend/tools/wp07a_compose_verify.py": "5b0e5efbb785b5666e3169df0828d8adbfcae310fea9209adc82e20e3eea0e76",
+    "backend/tools/wp07a_environment.py": "24706ae8dff64b41dcd6f9498c9c32cb84fb6c1241f6817ab7e5552b2316ce73",
+    "backend/tests/test_wp07a_real.py": "ab70587827535f3e89dfff33c8850cfb0a4d4b1f789eeda7cb7850409e7ec15a",
+    "backend/tests/test_wp07a_gate.py": "f037a0edf87ca7ea3789670ddb195fa80b0e9b738c3c8efb4ee186cf7b0ffd56",
+    "backend/app/maintenance.py": "0df0adbeae0591f40c7e82eb3c663613c23f27ca97a67eb5fb46bd4037738088",
+    "backend/app/deletion_control.py": "9b078d26197c2007a3dbde55220e346912ca3caed8c44d5fa474ffd654ae6f0c",
+    "backend/app/cleanup.py": "45bcb1a366b433d2668bd6b75235315f7d6847380fa5f278d389a91119eba1f9",
+    "backend/app/tasks.py": "21258bb44dcebafd4590bec32f03f3de504e711847893953611f4f8865c23c6d",
+    "backend/app/worker.py": "d757f1362a6c4e4ebc6679e18ee697234e8308194dbc2453e4eddf656ea440e2",
+    "backend/app/deployment.py": "40e74ff025d895d183b106bb66da172d7748369eefdac09afeb69a57d47da20d",
+    "backend/app/ingest.py": "78a2112d295c38e6515c42f876bc9d7c3ee874ae97fab87516ad01109fdefbfe",
+    "backend/app/processing.py": "36a57f4cf2fe02acd969a658bd78e12da5a03e4f77a6cfbf3de7787811685af1"
+  },
+  "coverage_limits": [
+    "midstream gate closure verified at ASGI and object-I/O seams",
+    "Windows host reboot not executed",
+    "60-second notification threshold not elapsed in actual periodic test",
+    "official old WP06 test instance not touched"
+  ],
+  "resource_teardown": {
+    "double_labeled_remaining": {
+      "containers": 0,
+      "volumes": 0,
+      "networks": 0
+    },
+    "paused_run_removed": "vsa-wp07a-test-e33600b587",
+    "verification_run_removed": "vsa-wp07a-test-1cb8b137e6",
+    "dedicated_runner_temp_directories_removed": 2,
+    "unreferenced_test_image_tags_removed": 3
+  }
+}

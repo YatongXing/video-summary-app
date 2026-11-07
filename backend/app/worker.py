@@ -16,10 +16,38 @@ from uuid import uuid4
 from app.database import database_ready
 from app.storage import object_store_ready
 from app import queue as task_queue
-from app import tasks
+from app import tasks, maintenance
 
 logger = logging.getLogger(__name__)
 
+
+
+def _progress_path():
+    import re,socket
+    from pathlib import Path
+    name=os.getenv('HOSTNAME') or socket.gethostname()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',name):raise ValueError('Worker identity unavailable')
+    root=Path(os.environ['DELETION_JOURNAL_DIR'])/'runtime'
+    if not root.is_dir() or root.is_symlink():raise ValueError('Worker control unavailable')
+    return name,root/('worker-'+name+'.json')
+
+_last_progress=0.0
+def _progress():
+    global _last_progress
+    if not maintenance.required() or time.monotonic()-_last_progress<5:return
+    from app.deletion_control import _write,identity_ready
+    if not identity_ready():raise ValueError('Worker control unavailable')
+    name,path=_progress_path();_write(path,{'instance':name,'last_progress':time.time()});_last_progress=time.monotonic()
+
+def _progress_ready():
+    if not maintenance.required():return True
+    try:
+        import json
+        name,path=_progress_path()
+        if path.is_symlink():return False
+        state=json.loads(path.read_text());stamp=state['last_progress']
+        return state['instance']==name and isinstance(stamp,(float,int)) and 0<=time.time()-stamp<=60
+    except Exception:return False
 
 class WorkerContext:
     """A single claimed attempt; all writes must use its current lease token.
@@ -115,6 +143,8 @@ def run(stop_event: threading.Event, interval_seconds: float = 1.0,
     next_workspace_cleanup = 0.0
     while not stop_event.is_set():
         try:
+            _progress()
+            maintenance.ensure_open()
             if os.environ.get('DATABASE_URL'):
                 task_queue.recover_expired()
                 if os.environ.get('PROCESSING_WORK_DIR') and time.monotonic() >= next_workspace_cleanup:
@@ -138,7 +168,14 @@ def run(stop_event: threading.Event, interval_seconds: float = 1.0,
 
         def execute():
             try:
-                processor(context)
+                from app.task_locks import producer,LockBusy
+                while not context.cancelled.is_set():
+                    try:
+                        with producer(context.id):processor(context)
+                        break
+                    except LockBusy:
+                        if not context.checkpoint():break
+                        context.cancelled.wait(.05)
             except BaseException:
                 failed.set()
             finally:
@@ -148,6 +185,8 @@ def run(stop_event: threading.Event, interval_seconds: float = 1.0,
         thread.start()
         next_heartbeat = time.monotonic() + heartbeat_seconds
         while not finished.wait(min(0.1, heartbeat_seconds)):
+            try:_progress()
+            except Exception:context.cancelled.set()
             if stop_event.is_set():
                 # A blocked processor/DB call cannot keep the worker process alive.
                 context.cancelled.set()
@@ -182,7 +221,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.healthcheck:
         from app.deletion_control import identity_ready
-        return 0 if database_ready() and object_store_ready() and identity_ready() else 1
+        return 0 if database_ready() and object_store_ready() and identity_ready() and _progress_ready() else 1
     if not os.environ.get('DATABASE_URL') or not os.environ.get('S3_ENDPOINT_URL'):
         logger.error('DATABASE_URL and S3_ENDPOINT_URL are required')
         return 1
@@ -192,23 +231,30 @@ def main() -> int:
         stop_event.set()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    maintenance = None
+    cleanup_thread = None
     try:
         from app.deletion_control import replay_journal, prune_journal
-        replay_journal()
+        if maintenance.ready():
+            try:replay_journal()
+            except maintenance.MaintenanceClosed:pass
         if os.getenv('CLEANUP_ENABLED', 'false').lower() == 'true':
             from app.cleanup import run_once
             interval = _positive_seconds(os.getenv('CLEANUP_POLL_SECONDS', '5'), 'Cleanup poll')
             def maintain():
+                last_failure_signal = None
                 while not stop_event.is_set():
                     try:
+                        maintenance.ensure_open()
                         run_once()
                         prune_journal()
                     except Exception:
-                        logger.warning('Cleanup remains pending; retrying after poll interval')
+                        observed = time.monotonic()
+                        if last_failure_signal is None or observed - last_failure_signal >= 300:
+                            logger.warning('Cleanup remains pending; retrying after poll interval')
+                            last_failure_signal = observed
                     stop_event.wait(interval)
-            maintenance = threading.Thread(target=maintain, name='task-cleanup', daemon=True)
-            maintenance.start()
+            cleanup_thread = threading.Thread(target=maintain, name='task-cleanup', daemon=True)
+            cleanup_thread.start()
         mode = os.getenv('WORKER_PROCESSOR_MODE', 'disabled')
         if mode not in ('disabled', 'offline'):
             raise ValueError('Unsupported processor mode')
@@ -224,8 +270,8 @@ def main() -> int:
         return 2
     finally:
         stop_event.set()
-        if maintenance is not None:
-            maintenance.join(timeout=5)
+        if cleanup_thread is not None:
+            cleanup_thread.join(timeout=5)
     return 0
 
 

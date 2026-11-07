@@ -1,4 +1,5 @@
 """Actual-media validation without permitting network demuxer inputs."""
+from app import maintenance
 from dataclasses import dataclass
 import json
 import math
@@ -21,7 +22,10 @@ class MediaInfo:
     container: str
 
 def validate_media(path: Path, *, runner=None) -> MediaInfo:
-    runner = runner or subprocess.run
+    maintenance.ensure_open()
+    if runner is None:
+        from app.preprocess import _run
+        runner = _run
     size=path.stat().st_size
     if size > MAX_BYTES: raise InputError('FILE_TOO_LARGE','单个视频不能超过 2 GB。',413)
     if not size: raise InputError()
@@ -30,7 +34,9 @@ def validate_media(path: Path, *, runner=None) -> MediaInfo:
         data=json.loads(probe.stdout)
         duration=float(data['format']['duration'])
         names=set(data['format']['format_name'].split(','))
+        maintenance.ensure_open()
         with path.open('rb') as f: head=f.read(4096)
+        maintenance.ensure_open()
         if 'mov' in names:
             offset=0; brands=None
             while offset+8<=len(head):

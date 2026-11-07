@@ -1,4 +1,5 @@
 """PostgreSQL queue authority: FIFO with only the approved user-active exception."""
+from app import maintenance
 from datetime import timedelta
 import os
 from fastapi import HTTPException
@@ -19,6 +20,7 @@ def _owner(worker_id):
         raise ValueError('Invalid worker identifier')
 
 def assert_fence(task,user,generation,worker_id,now):
+    maintenance.ensure_open()
     from app.deletion_control import blocked
     if (task['status']!='PROCESSING' or task['lease_generation']!=generation
         or worker_id is not None and task['lease_owner']!=worker_id
@@ -53,13 +55,18 @@ def _recover_locked(c,now):
         c.execute('UPDATE tasks SET lease_generation=lease_generation+1 WHERE id=%s',(t['id'],))
         _event(c,t,t['lease_owner'] or 'recovery','RECOVER','WORKER_LOST',now)
         recovered.append(str(t['id']))
+    maintenance.ensure_open()
     return recovered
 
 def recover_expired():
+    maintenance.ensure_open()
     settings()
     with tasks.connect() as c:
         c.execute('SELECT pg_advisory_xact_lock(%s)',(LOCK_ID,))
-        return _recover_locked(c,tasks.utcnow())
+        maintenance.ensure_open()
+        result=_recover_locked(c,tasks.utcnow())
+        maintenance.ensure_open()
+        return result
 
 def _block_reason(c,u,t,now):
     if u['disabled_at']: return 'ACCOUNT_DISABLED'
@@ -71,11 +78,13 @@ def _block_reason(c,u,t,now):
     return None
 
 def claim_next(worker_id):
+    maintenance.ensure_open()
     _owner(worker_id);config=settings()
     with tasks.connect() as c:
         c.execute('SELECT pg_advisory_xact_lock(%s)',(LOCK_ID,))
         now=tasks.utcnow();_recover_locked(c,now)
         if c.execute("SELECT count(*) AS n FROM tasks WHERE status='PROCESSING'").fetchone()['n']>=config['concurrency']:
+            maintenance.ensure_open()
             return None
         rows=c.execute("SELECT id,user_id FROM tasks WHERE status='QUEUED' AND deletion_requested_at IS NULL AND deleted_at IS NULL ORDER BY submitted_at,user_id,id").fetchall()
         bypassed=[];blocked_users=set()
@@ -89,6 +98,7 @@ def claim_next(worker_id):
             reason=_block_reason(c,u,t,now)
             if reason:
                 _event(c,t,worker_id,'BLOCK',reason,now)
+                maintenance.ensure_open()
                 return None
             active=c.execute("SELECT id FROM tasks WHERE user_id=%s AND status='PROCESSING'",(u['id'],)).fetchone()
             if u['role']=='USER' and active:
@@ -99,12 +109,15 @@ def claim_next(worker_id):
             _event(c,started,worker_id,'CLAIM','FIFO' if not bypassed else 'USER_ACTIVE_BYPASS',now)
             for earlier in bypassed:
                 _event(c,earlier,worker_id,'BYPASS','USER_ACTIVE',now,t['id'])
+            maintenance.ensure_open()
             return result
         if bypassed: _event(c,bypassed[0],worker_id,'BLOCK','USER_ACTIVE',now)
+        maintenance.ensure_open()
         return None
 
 def start_task(task_id,worker_id):
     """Internal transaction primitive; real workers select tasks with claim_next."""
+    maintenance.ensure_open()
     _owner(worker_id);settings()
     with tasks.connect() as c:
         c.execute('SELECT pg_advisory_xact_lock(%s)',(LOCK_ID,))
@@ -113,9 +126,13 @@ def start_task(task_id,worker_id):
         if t['status']=='QUEUED':
             reason=_block_reason(c,u,t,now)
             if reason: raise HTTPException(409,'任务尚不符合开始条件。')
-        return tasks._start_locked(c,u,t,now,worker_id)
+        maintenance.ensure_open()
+        result=tasks._start_locked(c,u,t,now,worker_id)
+        maintenance.ensure_open()
+        return result
 
 def heartbeat(task_id,generation,worker_id):
+    maintenance.ensure_open()
     _owner(worker_id);config=settings()
     with tasks.connect() as c:
         try:
@@ -124,14 +141,17 @@ def heartbeat(task_id,generation,worker_id):
         except HTTPException: return False
         c.execute('UPDATE tasks SET lease_expires_at=%s,last_heartbeat_at=%s WHERE id=%s',
                   (now+timedelta(seconds=config['lease']),now,task_id))
+        maintenance.ensure_open()
         return True
 
 def fenced_write(task_id,generation,worker_id,callback):
     """Only database effects: external objects must be staged before this registration transaction."""
+    maintenance.ensure_open()
     _owner(worker_id)
     with tasks.connect() as c:
         u,t=tasks._locks(c,task_id)
         assert_fence(t,u,generation,worker_id,tasks.utcnow())
         result=callback(c,t)
         assert_fence(t,u,generation,worker_id,tasks.utcnow())
+        maintenance.ensure_open()
         return result

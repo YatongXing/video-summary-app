@@ -1,5 +1,8 @@
 """Validated private bilingual results; public JSON is an exact, separate contract."""
+from app import maintenance
 from copy import deepcopy
+import psycopg
+from app.deletion_control import JournalError
 import json
 import math
 import os
@@ -10,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from psycopg.types.json import Jsonb
 from app import tasks, object_store
-from app.auth import Principal, current_user, authorize_task_content
+from app.auth import Principal, current_user
 from app.queue import assert_fence
 
 router = APIRouter()
@@ -98,6 +101,7 @@ def validate_output(candidate,filename,duration,language):
 
 def publish(task_id,generation,owner,candidates,synthetic=False):
     """The validated bodies, asset ledger and successful state commit together."""
+    maintenance.ensure_open()
     if not isinstance(candidates,dict) or set(candidates)!= {'zh','en'}: raise OutputError()
     with tasks.connect() as connection:
         user,task=tasks._locks(connection,task_id)
@@ -112,42 +116,26 @@ def publish(task_id,generation,owner,candidates,synthetic=False):
                 connection.execute('''INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key,byte_size)
                     VALUES(%s,%s,%s,%s,%s)''',(task_id,user['id'],kind,f'db-result/{identifier}/{suffix}',len(json.dumps(body,ensure_ascii=False,allow_nan=False).encode())))
         now=tasks.utcnow(); assert_fence(task,user,generation,owner,now)
-        return tasks._finish_locked(connection,user,task,now)
+        maintenance.ensure_open()
+        result=tasks._finish_locked(connection,user,task,now)
+        maintenance.ensure_open()
+        return result
 
 def _active_owner(connection,task_id,user):
-    active=connection.execute('''SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=%s AND s.user_id=%s
-        AND s.revoked_at IS NULL AND s.expires_at>now() AND u.disabled_at IS NULL''',(user.session_id,user.id)).fetchone()
-    if active is None: raise HTTPException(401,'Login required')
-    task=connection.execute('''SELECT * FROM tasks WHERE id=%s AND user_id=%s
-        AND deletion_requested_at IS NULL AND deleted_at IS NULL''',(task_id,user.id)).fetchone()
-    from app.deletion_control import blocked
-    if task is None or blocked(task_id): raise HTTPException(404,'Task not found')
-    return task
-
-def _active_content(connection,task_id,user,purpose=None,scope='summary'):
-    if purpose is None:return _active_owner(connection,task_id,user)
-    active=connection.execute('''SELECT u.role FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=%s AND s.user_id=%s
-        AND s.revoked_at IS NULL AND s.expires_at>now() AND u.disabled_at IS NULL''',(user.session_id,user.id)).fetchone()
-    if active is None:raise HTTPException(401,'Login required')
-    if active['role']!='ADMIN':raise HTTPException(403,'Administrator required')
-    task=connection.execute('SELECT * FROM tasks WHERE id=%s',(task_id,)).fetchone()
-    from app.deletion_control import blocked
-    if task is None or task['deletion_requested_at'] or task['deleted_at'] or blocked(task_id):raise HTTPException(404,'Task not found')
-    if user.id==task['user_id']:return task
-    consent=connection.execute('SELECT id FROM task_consents WHERE task_id=%s AND user_id=%s AND purpose=%s AND access_scope=%s AND revoked_at IS NULL',(task_id,task['user_id'],purpose,scope)).fetchone()
-    if consent is None:raise HTTPException(403,'Task content access denied')
-    return task
+    from app.content_auth import authorize_owner
+    return authorize_owner(connection,user,task_id)
 
 
-def _admin_access(user,task_id,purpose,scope):
-    if user.role!='ADMIN':raise HTTPException(403,'Administrator required')
-    # One request audit; continuation checks do not duplicate the audit per chunk.
-    authorize_task_content(user,task_id,purpose,scope)
+def _active_content(connection,task_id,user,purpose=None,scope='summary',request_id=None,audit=False):
+    from app.content_auth import authorize_owner
+    if purpose is not None or request_id is not None:
+        raise HTTPException(410, 'Support authorization retired')
+    return authorize_owner(connection,user,task_id)
 
 
-def get_result(task_id,user,language,purpose=None):
+def get_result(task_id,user,language,purpose=None,*,request_id=None):
     with tasks.connect() as connection:
-        task=_active_content(connection,task_id,user,purpose,'summary')
+        task=_active_content(connection,task_id,user,purpose,'summary',request_id=request_id)
         if task['status']!='SUCCEEDED': raise HTTPException(409,'Result is not ready')
         row=connection.execute('SELECT * FROM task_results WHERE task_id=%s AND user_id=%s AND language=%s',(task_id,task['user_id'],language)).fetchone()
         if row is None: raise HTTPException(409,'Result is not ready')
@@ -158,7 +146,7 @@ def get_result(task_id,user,language,purpose=None):
             validated=validate_output(candidate,task['display_filename'],task['duration_seconds'],language)
             if validated['export']!=row['export_document']: raise OutputError()
         except (OutputError,TypeError,KeyError,ValueError): raise HTTPException(409,'Stored result failed validation') from None
-        _active_content(connection,task_id,user,purpose,'summary')
+        _active_content(connection,task_id,user,purpose,'summary',request_id=request_id)
         return dict(validated,language=language,offline_test=row['synthetic'])
 
 @router.get('/tasks/{task_id}/result')
@@ -170,9 +158,9 @@ def export_route(task_id:UUID,language:str=Query('zh',pattern='^(zh|en)$'),user:
     result=get_result(task_id,user,language)
     return Response(json.dumps(result['export'],ensure_ascii=False,allow_nan=False),media_type='application/json',headers={'Content-Disposition':f'attachment; filename="video-summary-{language}.json"','X-Content-Type-Options':'nosniff'})
 
-def _video_response(task_id:UUID,request:Request,user:Principal=Depends(current_user),*,purpose=None):
+def _video_response(task_id:UUID,request:Request,user:Principal=Depends(current_user),*,purpose=None,request_id=None):
     with tasks.connect() as connection:
-        task=_active_content(connection,task_id,user,purpose,'video')
+        task=_active_content(connection,task_id,user,purpose,'video',request_id=request_id)
         asset=connection.execute("SELECT storage_key,byte_size FROM media_assets WHERE task_id=%s AND user_id=%s AND asset_kind='ORIGINAL' AND cleanup_state='REGISTERED' ORDER BY created_at,id LIMIT 1",(task_id,task['user_id'])).fetchone()
         if asset is None: raise HTTPException(404,'Video not found')
     client=object_store.client()
@@ -180,6 +168,8 @@ def _video_response(task_id:UUID,request:Request,user:Principal=Depends(current_
         metadata=client.head_object(Bucket=object_store.bucket(),Key=asset['storage_key'])
         length=metadata['ContentLength']
     except Exception: raise HTTPException(503,'Video temporarily unavailable') from None
+    with tasks.connect() as connection:
+        _active_content(connection,task_id,user,purpose,'video',request_id=request_id)
     start,end=0,length-1; partial=False
     header=request.headers.get('range')
     if header:
@@ -192,17 +182,23 @@ def _video_response(task_id:UUID,request:Request,user:Principal=Depends(current_
         partial=True
     try: stream=client.get_object(Bucket=object_store.bucket(),Key=asset['storage_key'],Range=f'bytes={start}-{end}')['Body']
     except Exception: raise HTTPException(503,'Video temporarily unavailable') from None
+    with tasks.connect() as connection:
+        try:
+            _active_content(connection,task_id,user,purpose,'video',request_id=request_id)
+        except BaseException:
+            stream.close()
+            raise
     def content():
         try:
             remaining=end-start+1
             while remaining:
-                with tasks.connect() as connection: _active_content(connection,task_id,user,purpose,'video')
+                with tasks.connect() as connection: _active_content(connection,task_id,user,purpose,'video',request_id=request_id)
                 chunk=stream.read(min(256*1024,remaining))
                 if not chunk: return
                 # A revoke/delete during an object read must stop that continuation.
-                with tasks.connect() as connection: _active_content(connection,task_id,user,purpose,'video')
+                with tasks.connect() as connection: _active_content(connection,task_id,user,purpose,'video',request_id=request_id)
                 remaining-=len(chunk); yield chunk
-        except HTTPException:
+        except (HTTPException, psycopg.Error, JournalError):
             return
         finally: stream.close()
     headers={'Accept-Ranges':'bytes','Content-Length':str(end-start+1),'X-Content-Type-Options':'nosniff','Cache-Control':'no-store'}
@@ -215,20 +211,42 @@ def video_route(task_id:UUID,request:Request,user:Principal=Depends(current_user
     return _video_response(task_id,request,user)
 
 
+def retired_admin(user):
+    from app.content_auth import session
+    with tasks.connect() as c:
+        session(c,user,'ADMIN')
+    raise HTTPException(410,'Purpose authorization retired')
+
+
 @router.get('/admin/tasks/{task_id}/result')
-def admin_result_route(task_id:UUID,purpose:str=Query(min_length=1,max_length=200),language:str=Query('zh',pattern='^(zh|en)$'),user:Principal=Depends(current_user)):
-    _admin_access(user,task_id,purpose,'summary')
-    return get_result(task_id,user,language,purpose)
+def admin_result_route(task_id:UUID,user:Principal=Depends(current_user)):
+    retired_admin(user)
 
 
 @router.get('/admin/tasks/{task_id}/export')
-def admin_export_route(task_id:UUID,purpose:str=Query(min_length=1,max_length=200),language:str=Query('zh',pattern='^(zh|en)$'),user:Principal=Depends(current_user)):
-    _admin_access(user,task_id,purpose,'summary')
-    result=get_result(task_id,user,language,purpose)
-    return Response(json.dumps(result['export'],ensure_ascii=False,allow_nan=False),media_type='application/json',headers={'Content-Disposition':f'attachment; filename="video-summary-{language}.json"','X-Content-Type-Options':'nosniff'})
+def admin_export_route(task_id:UUID,user:Principal=Depends(current_user)):
+    retired_admin(user)
 
 
 @router.get('/admin/tasks/{task_id}/video')
-def admin_video_route(task_id:UUID,request:Request,purpose:str=Query(min_length=1,max_length=200),user:Principal=Depends(current_user)):
-    _admin_access(user,task_id,purpose,'video')
-    return _video_response(task_id,request,user,purpose=purpose)
+def admin_video_route(task_id:UUID,user:Principal=Depends(current_user)):
+    retired_admin(user)
+
+
+def request_context(request,user,request_id,scope):
+    retired_admin(user)
+
+
+@router.get('/admin/support-requests/{request_id}/result')
+def support_result_route(request_id:UUID,user:Principal=Depends(current_user)):
+    retired_admin(user)
+
+
+@router.get('/admin/support-requests/{request_id}/export')
+def support_export_route(request_id:UUID,user:Principal=Depends(current_user)):
+    retired_admin(user)
+
+
+@router.get('/admin/support-requests/{request_id}/video')
+def support_video_route(request_id:UUID,user:Principal=Depends(current_user)):
+    retired_admin(user)
