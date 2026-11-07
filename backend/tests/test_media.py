@@ -60,11 +60,12 @@ def test_exact_byte_and_duration_boundaries(make_media,monkeypatch):
     assert error.value.code=='VIDEO_TOO_LONG'
 
 def test_probe_and_full_decode_forbid_network_protocols(make_media,monkeypatch):
-    original=media.subprocess.run; commands=[]
+    from app import preprocess
+    original=preprocess._run; commands=[]
     def recording(args,**kwargs):
         commands.append(args)
         return original(args,**kwargs)
-    monkeypatch.setattr(media.subprocess,'run',recording)
+    monkeypatch.setattr(preprocess,'_run',recording)
     media.validate_media(make_media(silent=True))
     validation=[args for args in commands if '-protocol_whitelist' in args]
     assert len(validation)==2

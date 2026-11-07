@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { validTaskId } from './TaskIdentifier'
 
 type Imported = { id: string; status: 'QUEUED'; filename: string; duration_seconds: number; has_audio: boolean }
 type Source = 'local' | 'url'
@@ -8,7 +9,7 @@ type TransferResult = { status: number; body: unknown }
 function imported(value: unknown): value is Imported {
   if (!value || typeof value !== 'object') return false
   const v = value as Partial<Imported>
-  return typeof v.id === 'string' && v.status === 'QUEUED' && typeof v.filename === 'string'
+  return typeof v.id === 'string' && validTaskId(v.id) && v.status === 'QUEUED' && typeof v.filename === 'string'
     && typeof v.duration_seconds === 'number' && Number.isFinite(v.duration_seconds)
     && v.duration_seconds > 0 && typeof v.has_audio === 'boolean'
 }
@@ -159,7 +160,7 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
       <p className="import-description">文件不超过 2 GB、2 小时。实际容器、编码和完整性由服务器校验，导入与排队不扣处理机会。</p>
       {error && <p className="message error" role="alert">{error}</p>}
       {message && <p className="message notice" role="status">{message}</p>}
-      {result && <div className="import-success" role="status"><strong>校验通过 · Queued</strong><p>{result.filename}</p><span>时长 {Math.ceil(result.duration_seconds)} 秒。视频已进入队列，处理与总结功能将在后续工作包接通。</span>{!result.has_audio && <p>此视频没有音轨，后续将进行视觉理解；没有可用语音。</p>}</div>}
+      {result && <div className="import-success" role="status"><strong>校验通过 · Queued</strong><p>{result.filename}</p><span>时长 {Math.ceil(result.duration_seconds)} 秒。视频已进入队列，请在“我的视频任务”中查看处理进度和结果。</span>{!result.has_audio && <p>此视频没有音轨，后续将进行视觉理解；没有可用语音。</p>}</div>}
       <div className="mode-switch" aria-label="视频来源">
         <button type="button" aria-pressed={source === 'local'} onClick={() => switchSource('local')} disabled={busy}>本地文件</button>
         <button type="button" aria-pressed={source === 'url'} onClick={() => switchSource('url')} disabled={busy}>HTTPS 链接</button>

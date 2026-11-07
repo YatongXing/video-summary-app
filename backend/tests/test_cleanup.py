@@ -2,6 +2,8 @@
 import asyncio
 from datetime import datetime,timedelta,timezone
 import os
+import json
+from pathlib import Path
 from uuid import uuid4
 import psycopg
 from psycopg import sql
@@ -22,6 +24,8 @@ def cleanup_db(monkeypatch,tmp_path):
         monkeypatch.setenv('QUEUE_GLOBAL_CONCURRENCY','4')
         monkeypatch.setenv('WORKER_LEASE_SECONDS','120')
         monkeypatch.setenv('WORKER_HEARTBEAT_SECONDS','30')
+        monkeypatch.setenv('S3_ENDPOINT_URL','http://wp04-synthetic:9000')
+        monkeypatch.setenv('S3_BUCKET','synthetic-private')
         monkeypatch.setenv('PROCESSING_WORK_DIR',str(tmp_path/'processing'))
         monkeypatch.setenv('DELETION_JOURNAL_DIR',str(tmp_path/'journal'))
         try:
@@ -30,6 +34,8 @@ def cleanup_db(monkeypatch,tmp_path):
                 run_migrations(db)
                 from app.deletion_control import initialize
                 initialize()
+                runtime=Path(os.environ['DELETION_JOURNAL_DIR'])/'runtime';runtime.mkdir(exist_ok=True)
+                runtime.joinpath('producer-ready').write_text(json.dumps({'deployment_id':str(db.execute('SELECT deployment_id FROM deletion_control_state').fetchone()[0])}))
                 yield db
         finally:control.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
 
@@ -41,7 +47,10 @@ def queued(db,uid=None,state='QUEUED',age=0):
 def job(db,tid):return db.execute('SELECT id,status,attempt_count FROM cleanup_jobs WHERE task_id=%s',(tid,)).fetchone()
 
 def asset(db,uid,tid,kind,key):
-    return db.execute('INSERT INTO media_assets(user_id,task_id,asset_kind,storage_key) VALUES (%s,%s,%s,%s) RETURNING id',(uid,tid,kind,key)).fetchone()[0]
+    from app import object_store,processing
+    backend='DB' if kind in ('RESULT_JSON','RESULT_DOCUMENT') else processing.workspace_backend() if kind=='PROCESSING_WORKSPACE' else object_store.backend_id()
+    bucket=None if kind in ('RESULT_JSON','RESULT_DOCUMENT','PROCESSING_WORKSPACE') else object_store.bucket()
+    return db.execute('INSERT INTO media_assets(user_id,task_id,asset_kind,storage_key,storage_backend,storage_bucket) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id',(uid,tid,kind,key,backend,bucket)).fetchone()[0]
 
 def test_delete_queued_is_immediate_idempotent_and_not_charged(cleanup_db):
     from app import cleanup,tasks,queue
@@ -79,9 +88,9 @@ def test_completed_bilingual_result_bodies_and_assets_clear(cleanup_db):
     cleanup.process_job(job(db,tid)[0])
     assert db.execute('SELECT count(*) FROM task_results WHERE task_id=%s',(tid,)).fetchone()[0]==0
     assert db.execute("SELECT count(*) FROM media_assets WHERE task_id=%s AND cleanup_state<>'DELETED'",(tid,)).fetchone()[0]==0
-    receipt=cleanup.list_jobs(uid)[0]
-    assert receipt['online_complete'] is True
-    assert receipt['backup_cleanup_state']!='COMPLETED' # no evidence for unregistered/manual backups
+    receipt=job_receipt(db,tid)
+    assert receipt['online_completed_at'] is not None
+    assert 'backup_cleanup_state' not in receipt # unknown infrastructure is separate, not a product status
 
 @pytest.mark.parametrize('kind',['EVALUATION_COPY','ANNOTATION','MODEL_OUTPUT','FAILURE_CASE'])
 def test_linked_evaluation_artifact_is_not_exempt(cleanup_db,monkeypatch,kind):
@@ -92,9 +101,13 @@ def test_linked_evaluation_artifact_is_not_exempt(cleanup_db,monkeypatch,kind):
     db.execute('INSERT INTO evaluation_links(task_id,user_id,asset_id,link_kind) VALUES (%s,%s,%s,%s)',(tid,uid,aid,kind))
     deleted=[]
     class Storage:
+        def list_multipart_uploads(self,**kw):return {'Uploads':[]}
+        def head_bucket(self,**kw):pass
+        def get_bucket_versioning(self,**kw):return {}
         def delete_object(self,**kw):deleted.append(kw['Key'])
         def head_object(self,**kw):raise ClientError({'Error':{'Code':'404'}},'HeadObject')
     monkeypatch.setattr(object_store,'client',lambda:Storage())
+    monkeypatch.setattr(object_store,'cleanup_client',lambda:Storage())
     monkeypatch.setattr(object_store,'bucket',lambda:'synthetic-private')
     cleanup.request_delete(tid,uid);cleanup.process_job(job(db,tid)[0])
     assert deleted==[key]
@@ -108,7 +121,7 @@ def test_unknown_asset_cannot_be_reported_deleted(cleanup_db):
     aid=asset(db,uid,tid,'PROCESSING_WORKSPACE','../../unowned')
     cleanup.request_delete(tid,uid);cleanup.process_job(job(db,tid)[0])
     assert db.execute('SELECT cleanup_state FROM media_assets WHERE id=%s',(aid,)).fetchone()[0]!='DELETED'
-    assert cleanup.list_jobs(uid)[0]['online_complete'] is False
+    assert job_receipt(db,tid)['online_completed_at'] is None
 
 @pytest.mark.parametrize('state',['QUEUED','PROCESSING','SUCCEEDED','FAILED','CANCELLED'])
 def test_thirty_day_expiry_covers_all_states(cleanup_db,state):
@@ -130,39 +143,36 @@ def test_deletion_audit_ninety_days_separate_from_task_logs(cleanup_db):
     assert rows==[('DELETION_90D',)]
 
 
-def test_failed_cleanup_escalates_after_three_retries_not_first_attempt(cleanup_db,monkeypatch):
+def test_transient_cleanup_retries_and_signals_after_five_failures(cleanup_db,monkeypatch):
     from app import cleanup,tasks
     db=cleanup_db;uid,tid=queued(db)
-    asset(db,uid,tid,'PROCESSING_WORKSPACE','invalid-unowned-path')
+    asset(db,uid,tid,'EVALUATION_COPY','evaluation/'+uuid4().hex)
+    def transient(a):raise OSError('synthetic temporary storage failure')
+    monkeypatch.setattr(cleanup,'_physical',transient)
     cleanup.request_delete(tid,uid);identifier=job(db,tid)[0]
     now=[datetime.now(timezone.utc)+timedelta(seconds=2)]
     monkeypatch.setattr(tasks,'utcnow',lambda:now[0])
     for attempt in range(1,6):
         cleanup.process_job(identifier)
-        state=job(db,tid)
-        assert state[2]==attempt
-        if attempt<=4:assert state[1]!='MANUAL_REQUIRED'
-        now[0]+=timedelta(minutes=1,seconds=1)
-    assert job(db,tid)[1]=='MANUAL_REQUIRED'
+        state=job(db,tid);assert state[2]==attempt and state[1]=='RETRY_WAIT'
+        r=job_receipt(db,tid);assert r['consecutive_failures']==attempt
+        wait=(r['next_attempt_at']-now[0]).total_seconds()
+        assert min(3600,60*2**(attempt-1))<=wait<=min(3600,72*2**(attempt-1))
+        now[0]=r['next_attempt_at']+timedelta(seconds=1)
     assert db.execute('SELECT count(*) FROM cleanup_alerts WHERE cleanup_job_id=%s AND resolved_at IS NULL',(identifier,)).fetchone()[0]>=1
 
-
-def test_thirty_minute_failure_alert_and_admin_retrigger_are_audited(cleanup_db,monkeypatch):
-    from app import cleanup,tasks
+def test_dangerous_failure_cannot_be_admin_retriggered(cleanup_db):
+    from app import cleanup
     db=cleanup_db;uid,tid=queued(db);cleanup.request_delete(tid,uid)
     identifier=job(db,tid)[0]
-    db.execute("UPDATE cleanup_jobs SET started_at=now()-interval '31 minutes' WHERE id=%s",(identifier,))
-    # Unsupported asset prevents accidental completion before escalation.
+    db.execute("UPDATE cleanup_jobs SET job_version=job_version+1,started_at=now()-interval '31 minutes' WHERE id=%s",(identifier,))
     asset(db,uid,tid,'PROCESSING_WORKSPACE','invalid-unowned-path')
     cleanup.process_job(identifier)
-    assert job(db,tid)[1]=='MANUAL_REQUIRED'
-    admin=identity(db,'ADMIN');cleanup.retry_job(identifier,admin)
-    assert job(db,tid)[1]=='PENDING'
-    assert db.execute("SELECT count(*) FROM audit_events WHERE actor_user_id=%s AND retention_class='DELETION_90D'",(admin,)).fetchone()[0]>=1
-    before=job(db,tid)[2]
-    cleanup.process_job(identifier)
-    assert job(db,tid)[2]==before+1 # persisted admin intent survives worker dispatch
-    assert cleanup.list_jobs(uid)[0]['online_complete'] is False
+    assert job(db,tid)[1]=='BLOCKED'
+    admin=identity(db,'ADMIN')
+    with pytest.raises(HTTPException) as e:cleanup.retry_job(identifier,admin)
+    assert e.value.status_code==410
+    assert job_receipt(db,tid)['online_completed_at'] is None
 
 
 def test_http_delete_requires_csrf_and_immediately_denies_content(cleanup_db):
@@ -175,11 +185,12 @@ def test_http_delete_requires_csrf_and_immediately_denies_content(cleanup_db):
             token=c.cookies.get(auth.COOKIE_NAME)
             response=await c.delete(f'/tasks/{tid}',headers={'Origin':'http://127.0.0.1:8000','X-CSRF-Token':auth.csrf_token(token)})
             assert response.status_code==202,response.text
-            assert response.json()['online_complete'] is False
+            assert set(response.json())=={'id','task_id','accepted'} and response.json()['accepted'] is True
+            assert 'completed_at' not in response.json() or response.json()['completed_at'] is None
             assert (await c.get('/tasks')).json()==[]
             for suffix in ('','/result?language=zh','/export?language=en','/video'):
                 assert (await c.get(f'/tasks/{tid}'+suffix)).status_code in (403,404)
-            assert (await c.get('/deletions')).status_code==200
+            assert (await c.get('/deletions')).status_code==410
     asyncio.run(scenario())
 
 
@@ -194,9 +205,9 @@ def test_paused_worker_cannot_create_workspace_after_deletion_cleanup(cleanup_db
         result=real_write(callback);calls[0]+=1
         if calls[0]==1:
             cleanup.request_delete(tid,uid)
-            db.execute('UPDATE cleanup_jobs SET worker_safe_after=now() WHERE task_id=%s',(tid,))
+            pass # Physical EX now proves safety; lease timestamps are not a bypass.
             cleanup.process_job(job(db,tid)[0])
-            assert cleanup.list_jobs(uid)[0]['online_complete'] is True
+            assert job_receipt(db,tid)['online_completed_at'] is not None
         return result
     monkeypatch.setattr(context,'fenced_write',pause_after_registration)
     with pytest.raises((HTTPException,RuntimeError)):
@@ -212,7 +223,7 @@ def test_expired_task_bodies_and_logs_are_pruned_despite_external_cleanup_failur
     db.execute("UPDATE tasks SET created_at=now()-interval '31 days' WHERE id=%s",(tid,))
     asset(db,uid,tid,'UNKNOWN','unowned-unremovable-path')
     cleanup.run_once()
-    assert cleanup.list_jobs(uid)[0]['online_complete'] is False
+    assert job_receipt(db,tid)['online_completed_at'] is None
     assert db.execute('SELECT count(*) FROM task_results WHERE task_id=%s',(tid,)).fetchone()[0]==0
     assert db.execute('SELECT count(*) FROM task_attempts WHERE task_id=%s',(tid,)).fetchone()[0]==0
     assert db.execute("SELECT count(*) FROM audit_events WHERE task_id=%s AND retention_class='TASK_30D'",(tid,)).fetchone()[0]==0
@@ -228,10 +239,17 @@ def test_long_worker_lease_does_not_postpone_cleanup_deadline_alert(cleanup_db,m
     identifier=job(db,tid)[0]
     now=datetime.now(timezone.utc)+timedelta(seconds=1)
     monkeypatch.setattr(tasks,'utcnow',lambda:now)
-    db.execute('UPDATE cleanup_jobs SET started_at=%s,next_attempt_at=%s WHERE id=%s',(now-timedelta(seconds=elapsed_seconds),future,identifier))
+    db.execute('UPDATE cleanup_jobs SET job_version=job_version+1,started_at=%s,next_attempt_at=%s WHERE id=%s',(now-timedelta(seconds=elapsed_seconds),future,identifier))
     cleanup.run_once()
     row=job(db,tid)
     assert row[2]==0 # waiting on a live old lease never performs physical cleanup
-    assert (row[1]=='MANUAL_REQUIRED') is expect_alert
+    assert row[1]!='COMPLETED'
     count=db.execute("SELECT count(*) FROM cleanup_alerts WHERE cleanup_job_id=%s AND alert_code='CLEANUP_TIME_LIMIT' AND resolved_at IS NULL",(identifier,)).fetchone()[0]
     assert count==int(expect_alert)
+
+def job_receipt(db,tid):
+    from app.cleanup import _receipt
+    from psycopg.rows import dict_row
+    from app import tasks
+    with tasks.connect() as c:
+        return _receipt(c,c.execute('SELECT * FROM cleanup_jobs WHERE task_id=%s',(tid,)).fetchone())

@@ -1,0 +1,8 @@
+# Web build context contains only approved static output and its proxy recipe.
+**
+!frontend/
+!frontend/dist/
+!frontend/dist/**
+!deploy/
+!deploy/Dockerfile.web
+!deploy/wp07_web.py

@@ -1,22 +1,11 @@
 # Video Summary App
 
-当前运行实现停在S3-10：本地离线应用与旧基线非模型回归/短时容量证据。已批准[CR-001新文档基线](docs/CR-001.md)，本轮仅更新文档，代码、授权机制及页面尚未切换。后续[工作包](docs/CR-001_IMPLEMENTATION_PLAN.md)须逐包授权；先完成CR新验收/切换，再单独启动S3-11和新范围S3-12。旧测试不证明CR通过。真实Qwen和计费尚未启动。
+Video Summary App 在 Windows 上导入本地视频或经安全校验的 HTTPS 直达视频，处理任务并提供双语摘要、JSON 导出和视频播放。当前交付使用离线模型替身。
 
-## 先在 Windows 上运行和验收
+截至 2026-11-07，CR-002 和新版 WP06 已获负责人验收。WP07-A 已完成全新 Windows Docker 部署的隔离验证，正式实例尚未创建、发布或开放。实际 API 和 Web 验证镜像已随测试资源回收，正式创建前需按冻结版本重建、隔离复验并保留候选镜像。
 
-请按 **[Windows 11 本地运行与人工验收指南](docs/LOCAL_TEST_GUIDE.md)** 逐步操作：
+- [现行产品契约](docs/CR-002.md)：USER 和 ADMIN 均可从个人入口查看自己的内容。管理员后台仅显示白名单元数据，按 Task ID 搜索。
+- [正式本地部署方案](docs/CR-WP07A_LOCAL_DEPLOYMENT_PLAN.md)和[执行清单](docs/CR-WP07A_FORMAL_RUNBOOK.md)：使用新的数据库、私有对象存储和独立删除控制卷。创建、发布到 localhost 和开门分阶段审批。
+- [阶段状态与待办](docs/IMPLEMENTATION_PLAN.md#当前交付状态)和[文档索引](docs/README.md)：区分当前规范、验证证据、历史归档及后续工作。
 
-- Part A：Docker/Node 环境、隔离验收数据、数据库迁移与管理员初始化。
-- Part B：打开真实应用，注册登录、上传合成视频、查看离线结果、管理及安全停止/重启。
-- Part C：真实 Qwen 的配置与批准准备，**暂不执行**；当前没有仅改环境开关即可使用真实模型的模式。
-
-指南默认使用 `video-summary-app-manual` Docker 项目，复用当前代码及配置，与原 `video-summary-app` 数据卷分离。根目录真实 `.env` 不用于离线启动，请保留且不要提交。
-
-## 其他入口
-
-- [文档索引](docs/README.md)：需求、验收、架构和 ADR。
-- [已有部署说明](deploy/README.md)：按工作包整理的运行细节。
-- [非模型回归与本机容量基线](docs/REGRESSION_BASELINE.md)：已执行的证据、边界和重跑命令。
-- [实施计划](docs/IMPLEMENTATION_PLAN.md)：当前停止于 S3-10，后续工作包须另行授权。
-
-离线替身输出不能证明视频理解质量。不要删除现有数据库或数据卷来解决启动错误；本轮文档不授权模型调用、提交或推送。
+旧 manual 和 WP06 容器、全部 13 个历史卷均已按批次回收。最后一次清理盘点为 0 个容器、0 个卷，旧 manual 专用网络及既有镜像保留。S3-11 真实 Qwen 接入及计费、S3-12 部署完善仍待各自授权。 [处置记录](docs/CR-WP07A_FORMAL_RUNBOOK.md#2026-11-07-剩余六卷最终处置)

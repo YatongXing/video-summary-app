@@ -1,0 +1,130 @@
+name: ${WP07_PROJECT_NAME:?set new project name}
+x-labels: &labels
+  vsa.work_package: CR-WP07-A
+  vsa.synthetic_only: "${WP07_SYNTHETIC_ONLY:-false}"
+x-app: &app
+  image: ${WP07_APP_IMAGE:-video-summary-app-wp07:local}
+  build:
+    context: ../backend
+    target: runtime
+  user: "10001:10001"
+  labels: *labels
+  networks: [private]
+  volumes: &app-volumes
+    - deletion-control:/control/journal
+    - input-staging:/control/staging
+    - processing-work:/control/processing
+  environment: &runtime-env
+    DATABASE_URL: postgresql://vsa_runtime:${WP07_RUNTIME_PASSWORD:?set runtime secret}@db:5432/${WP07_DB:?set database}
+    S3_ENDPOINT_URL: http://object-store:9000
+    S3_BUCKET: video-summary-private
+    S3_ACCESS_KEY: ${WP07_OBJECT_ACCESS_KEY:?set storage access}
+    S3_SECRET_KEY: ${WP07_OBJECT_SECRET_KEY:?set storage secret}
+    DELETION_JOURNAL_DIR: /control/journal
+    IMPORT_STAGING_DIR: /control/staging
+    PROCESSING_WORK_DIR: /control/processing
+    MAINTENANCE_GATE_REQUIRED: "true"
+    MODEL_CALLS_ENABLED: "false"
+    WORKER_PROCESSOR_MODE: offline
+    CLEANUP_ENABLED: "true"
+    CLEANUP_POLL_SECONDS: "5"
+    QUEUE_GLOBAL_CONCURRENCY: "2"
+    WORKER_HEARTBEAT_SECONDS: "2"
+    WORKER_LEASE_SECONDS: "30"
+    AUTH_ALLOWED_ORIGINS: http://127.0.0.1:${WP07_HTTP_PORT:-58080},http://localhost:${WP07_HTTP_PORT:-58080}
+    AUTH_COOKIE_SECURE: "false"
+    SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+services:
+  db:
+    image: postgres:17-alpine
+    labels: *labels
+    environment:
+      POSTGRES_USER: vsa_init
+      POSTGRES_PASSWORD: ${WP07_INIT_PASSWORD:?set initialization secret}
+      POSTGRES_DB: ${WP07_DB:?set database}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U vsa_init -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  object-store:
+    image: rustfs/rustfs:1.0.4
+    labels: *labels
+    environment:
+      RUSTFS_ACCESS_KEY: ${WP07_OBJECT_ACCESS_KEY:?set storage access}
+      RUSTFS_SECRET_KEY: ${WP07_OBJECT_SECRET_KEY:?set storage secret}
+      RUSTFS_VOLUMES: /data
+    volumes: [object-data:/data]
+    networks: [private]
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:9000/health]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  volume-init:
+    <<: *app
+    user: "0:0"
+    environment: {}
+    command: [sh, -c, "chown 10001:10001 /control/journal /control/staging /control/processing && chmod 700 /control/journal /control/staging /control/processing"]
+    profiles: [initialize]
+  initialize:
+    <<: *app
+    profiles: [initialize]
+    environment:
+      <<: *runtime-env
+      WP07_NEW_INSTANCE: "true"
+      INITIAL_DATABASE_URL: postgresql://vsa_init:${WP07_INIT_PASSWORD:?set initialization secret}@db:5432/${WP07_DB:?set database}
+      MAINTENANCE_DATABASE_URL: postgresql://vsa_maint:${WP07_MAINT_PASSWORD:?set maintenance secret}@db:5432/${WP07_DB:?set database}
+      RUNTIME_DATABASE_URL: postgresql://vsa_runtime:${WP07_RUNTIME_PASSWORD:?set runtime secret}@db:5432/${WP07_DB:?set database}
+    command: [python, -m, app.deployment, initialize]
+    depends_on:
+      db: {condition: service_healthy}
+      object-store: {condition: service_healthy}
+  maintenance:
+    <<: *app
+    profiles: [maintenance]
+    environment:
+      <<: *runtime-env
+      MAINTENANCE_DATABASE_URL: postgresql://vsa_maint:${WP07_MAINT_PASSWORD:?set maintenance secret}@db:5432/${WP07_DB:?set database}
+    command: [python, -m, app.maintenance, status]
+  api:
+    <<: *app
+    command: [python, -m, uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --no-proxy-headers]
+    depends_on:
+      db: {condition: service_healthy}
+      object-store: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 2
+  worker:
+    <<: *app
+    command: [python, -m, app.worker]
+    healthcheck:
+      test: [CMD, python, -m, app.worker, --healthcheck]
+      interval: 15s
+      timeout: 5s
+      retries: 2
+  web:
+    image: ${WP07_WEB_IMAGE:-video-summary-app-wp07-web:local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    user: "10001:10001"
+    labels: *labels
+    networks: [private]
+    ports: ["127.0.0.1:${WP07_HTTP_PORT:-58080}:8080"]
+    environment:
+      WP07_API_UPSTREAM: http://api:8000
+    depends_on: [api]
+volumes:
+  postgres-data: {labels: *labels}
+  object-data: {labels: *labels}
+  deletion-control: {labels: *labels}
+  input-staging: {labels: *labels}
+  processing-work: {labels: *labels}
+networks:
+  private: {labels: *labels}

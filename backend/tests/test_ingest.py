@@ -23,11 +23,21 @@ def ingest_db(monkeypatch, tmp_path):
         control.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
         scoped = make_conninfo(url, options=f'-csearch_path={schema}')
         monkeypatch.setenv('DATABASE_URL', scoped)
-        monkeypatch.setenv('IMPORT_STAGING_DIR', str(tmp_path))
+        monkeypatch.setenv('IMPORT_STAGING_DIR', str(tmp_path/'staging'))
+        monkeypatch.setenv('DELETION_JOURNAL_DIR',str(tmp_path/'journal'))
+        monkeypatch.setenv('S3_ENDPOINT_URL','http://wp04-synthetic:9000')
         from app.migrate import run_migrations
         try:
             with psycopg.connect(scoped, autocommit=True) as connection:
                 run_migrations(connection)
+                import json
+                from pathlib import Path
+                from app.deletion_control import initialize
+                from app import object_store
+                initialize()
+                runtime=Path(os.environ['DELETION_JOURNAL_DIR'])/'runtime';runtime.mkdir(exist_ok=True)
+                (runtime/'producer-ready').write_text(json.dumps({'deployment_id':str(connection.execute('SELECT deployment_id FROM deletion_control_state').fetchone()[0])}))
+                monkeypatch.setattr(object_store,'cleanup_client',lambda:SyntheticStorage({}))
                 yield connection
         finally:
             control.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
@@ -143,7 +153,8 @@ def test_valid_upload_and_url_become_owned_queued_tasks_without_spend(ingest_db,
     assert ingest_db.execute('SELECT count(*) FROM media_assets').fetchone()[0]==2
     assert ingest_db.execute('SELECT count(*) FROM quota_events').fetchone()[0]==0
     assert ingest_db.execute('SELECT count(*) FROM input_imports').fetchone()[0]==0
-    assert not list(tmp_path.iterdir()) or all(p.name=='valid.mp4' for p in tmp_path.iterdir())
+    from app.ingest import staging_dir
+    assert not list(staging_dir().iterdir())
 
 
 def test_streamed_bytes_are_bounded_without_content_length(ingest_db,monkeypatch,tmp_path):
@@ -157,9 +168,12 @@ def test_streamed_bytes_are_bounded_without_content_length(ingest_db,monkeypatch
             response=await c.post('/inputs/upload',content=chunks(),headers=upload_headers(csrf))
             assert response.status_code==413,response.text
     asyncio.run(scenario())
+    from app.ingest import recover_staging
+    recover_staging()
     assert_no_task_or_charge(ingest_db)
     assert ingest_db.execute('SELECT count(*) FROM input_imports').fetchone()[0]==0
-    assert not list(tmp_path.iterdir())
+    from app.ingest import staging_dir
+    assert not list(staging_dir().iterdir())
 
 
 def test_failed_object_cleanup_remains_registered_until_recovery(ingest_db,valid_video,monkeypatch,tmp_path):
@@ -170,7 +184,8 @@ def test_failed_object_cleanup_remains_registered_until_recovery(ingest_db,valid
         ingest_db.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(user,))
     def failed_delete(key):raise OSError('synthetic cleanup failure')
     monkeypatch.setattr(object_store,'put_original',upload_then_revoke)
-    monkeypatch.setattr(object_store,'delete_original',failed_delete)
+    storage=SyntheticStorage(objects);storage.fail_delete=True
+    monkeypatch.setattr(object_store,'cleanup_client',lambda:storage)
     async def scenario():
         async with client(token) as c:
             response=await c.post('/inputs/upload',content=valid_video,headers=upload_headers(csrf))
@@ -180,7 +195,7 @@ def test_failed_object_cleanup_remains_registered_until_recovery(ingest_db,valid
     rows=ingest_db.execute('SELECT state FROM input_imports').fetchall()
     assert rows==[('CLEANUP_REQUIRED',)],'Unconfirmed object deletion must keep the recovery ledger'
     assert len(objects)==1
-    monkeypatch.setattr(object_store,'delete_original',lambda key:objects.pop(key,None))
+    storage.fail_delete=False
     ingest.recover_staging()
     assert not objects
     assert ingest_db.execute('SELECT count(*) FROM input_imports').fetchone()[0]==0
@@ -201,9 +216,12 @@ def test_disconnected_upload_removes_partial_staging(ingest_db,tmp_path):
         with pytest.raises(InputError) as error:await ingest.upload(request,principal)
         assert error.value.code=='IMPORT_FAILED'
     asyncio.run(scenario())
+    from app.ingest import recover_staging
+    recover_staging()
     assert_no_task_or_charge(ingest_db)
     assert ingest_db.execute('SELECT count(*) FROM input_imports').fetchone()[0]==0
-    assert not list(tmp_path.iterdir())
+    from app.ingest import staging_dir
+    assert not list(staging_dir().iterdir())
 
 
 
@@ -217,6 +235,7 @@ def test_stale_cleanup_skips_a_renewed_import(ingest_db,monkeypatch,tmp_path):
     ingest_db.execute("UPDATE input_imports SET state='STORING',expires_at=now()-interval '1 minute' WHERE id=%s",(identifier,))
     ingest.renew_import(identifier)
     deleted=[];monkeypatch.setattr(object_store,'delete_original',deleted.append)
+    monkeypatch.setattr(object_store,'cleanup_client',lambda:pytest.fail('Renewed/finalized import must not call storage'))
     ingest.cleanup_import(identifier,key,path,True,stale_only=True)
     assert not deleted and path.exists()
     assert ingest_db.execute('SELECT count(*) FROM input_imports WHERE id=%s',(identifier,)).fetchone()[0]==1
@@ -235,6 +254,20 @@ def test_stale_cleanup_cannot_delete_a_finalized_registered_object(ingest_db,mon
         ingest_db.execute("INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key) VALUES (%s,%s,'ORIGINAL',%s)",(task,user,key))
         ingest_db.execute('DELETE FROM input_imports WHERE id=%s',(identifier,))
     deleted=[];monkeypatch.setattr(object_store,'delete_original',deleted.append)
+    monkeypatch.setattr(object_store,'cleanup_client',lambda:pytest.fail('Renewed/finalized import must not call storage'))
     ingest.cleanup_import(identifier,key,path,True,stale_only=True)
     assert not deleted
     assert ingest_db.execute('SELECT count(*) FROM media_assets WHERE storage_key=%s',(key,)).fetchone()[0]==1
+
+class SyntheticStorage:
+    def __init__(self,objects):self.objects=objects;self.fail_delete=False
+    def head_bucket(self,**kwargs):pass
+    def get_bucket_versioning(self,**kwargs):return {}
+    def list_multipart_uploads(self,**kwargs):return {'Uploads':[]}
+    def delete_object(self,**kwargs):
+        if self.fail_delete:raise OSError('synthetic cleanup failure')
+        self.objects.pop(kwargs['Key'],None)
+    def head_object(self,**kwargs):
+        from botocore.exceptions import ClientError
+        if kwargs['Key'] in self.objects:return {'ContentLength':len(self.objects[kwargs['Key']])}
+        raise ClientError({'Error':{'Code':'NoSuchKey'}},'HeadObject')

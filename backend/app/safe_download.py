@@ -1,4 +1,5 @@
 """Pinned-IP HTTPS download: DNS validation and the connected socket cannot diverge."""
+from app import maintenance
 import http.client
 import ipaddress
 import os
@@ -43,10 +44,12 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
         except BaseException: sock.close(); raise
 
 def download_video(url: str,path: Path,max_bytes: int):
+    maintenance.ensure_open()
     deadline=time.monotonic()+max(1,min(3600,int(os.getenv('IMPORT_DOWNLOAD_TIMEOUT_SECONDS','1800'))))
     current=url
     try:
         for redirect in range(4):
+            maintenance.ensure_open()
             parts,host,target=validate_url(current)
             addresses=resolve_public(host)
             remaining=deadline-time.monotonic()
@@ -74,8 +77,10 @@ def download_video(url: str,path: Path,max_bytes: int):
                 total=0
                 with path.open('wb') as destination:
                     while True:
+                        maintenance.ensure_open()
                         if time.monotonic()>deadline: raise TimeoutError()
                         chunk=response.read(min(1024*1024,max_bytes-total+1))
+                        maintenance.ensure_open()
                         if not chunk: break
                         total+=len(chunk)
                         if total>max_bytes: raise InputError('FILE_TOO_LARGE','单个视频不能超过 2 GB。',413)

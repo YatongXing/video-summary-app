@@ -1,4 +1,5 @@
 """Private media -> model candidate. Final output validation belongs to S3-08."""
+from app import maintenance
 from contextlib import contextmanager
 from pathlib import Path
 import os
@@ -19,6 +20,7 @@ class AlreadyAnalyzed(AdapterError):
     def __init__(self):super().__init__('internal')
 
 def _check(context):
+    maintenance.ensure_open()
     if context.cancelled.is_set() or context.checkpoint() is False:
         raise ProcessingCancelled('Processing cancelled')
     return True
@@ -26,7 +28,13 @@ def _check(context):
 def _root():
     root=Path(os.getenv('PROCESSING_WORK_DIR','/var/lib/video-summary-app/processing'))
     root.mkdir(parents=True,exist_ok=True,mode=0o700)
+    if root.is_symlink():raise ValueError('Unsafe workspace root')
     return root.resolve()
+
+def workspace_backend():
+    import hashlib
+    root=_root();st=root.stat()
+    return 'WORKSPACE:'+hashlib.sha256((str(root)+':'+str(st.st_dev)+':'+str(st.st_ino)).encode()).hexdigest()
 
 def _workspace_path(key):
     match=re.fullmatch(r'local-workspace/([0-9]+)/([0-9a-f]{32})',key)
@@ -34,10 +42,20 @@ def _workspace_path(key):
     return _root()/match.group(2),int(match.group(1))
 
 def _remove_workspace(path):
-    if path.is_symlink():path.unlink()
-    elif path.exists():shutil.rmtree(path)
+    maintenance.ensure_open()
+    if path.is_symlink():raise ValueError('Unsafe workspace link')
+    elif path.exists():
+        for directory,dirs,files in os.walk(path,topdown=False,followlinks=False):
+            for name in files:
+                maintenance.ensure_open();(Path(directory)/name).unlink()
+            for name in dirs:
+                maintenance.ensure_open();child=Path(directory)/name
+                if child.is_symlink():child.unlink()
+                else:child.rmdir()
+        maintenance.ensure_open();path.rmdir()
 
 def _clean_registered(asset_id,key):
+    if not maintenance.ready():return False # Registered locator remains for later recovery.
     try:
         path,_=_workspace_path(key);_remove_workspace(path)
         with tasks.connect() as c:
@@ -50,28 +68,32 @@ def _clean_registered(asset_id,key):
         return False
 
 def recover_workspaces():
-    """Explicit recovery: never removes live current-generation work."""
+    maintenance.ensure_open()
+    from app import task_locks
+    from app.cleanup import io_activity
+    if not task_locks.producer_ready():return []
     with tasks.connect() as c:
-        rows=c.execute("SELECT id,task_id,storage_key FROM media_assets WHERE asset_kind='PROCESSING_WORKSPACE' AND cleanup_state<>'DELETED'").fetchall()
+        rows=c.execute("SELECT * FROM media_assets WHERE asset_kind='PROCESSING_WORKSPACE' AND cleanup_state<>'DELETED'").fetchall()
+        maintenance.ensure_open()
     recovered=[]
     for row in rows:
         try:
-            path,generation=_workspace_path(row['storage_key'])
-            with tasks.connect() as c:
-                task=c.execute('SELECT * FROM tasks WHERE id=%s FOR UPDATE',(row['task_id'],)).fetchone()
-                if task and task['status']=='PROCESSING' and task['lease_generation']==generation and task['lease_expires_at'] and task['lease_expires_at']>tasks.utcnow() and not task['deletion_requested_at'] and not task['deleted_at']:continue
-                _remove_workspace(path)
-                c.execute("UPDATE media_assets SET cleanup_state='DELETED',deleted_at=now() WHERE id=%s",(row['id'],))
-                recovered.append(str(row['id']))
-        except Exception:
-            with tasks.connect() as c:c.execute("UPDATE media_assets SET cleanup_state='FAILED' WHERE id=%s",(row['id'],))
+            with task_locks.cleanup_global(),task_locks.exclusive(row['task_id']),io_activity(row['id']):
+                with tasks.connect() as c:
+                    task=c.execute('SELECT * FROM tasks WHERE id=%s',(row['task_id'],)).fetchone()
+                    if not task or task['user_id']!=row['user_id']:continue
+                    if task['status']=='PROCESSING' and not task['deletion_requested_at'] and not task['deleted_at']:continue
+                    maintenance.ensure_open()
+                if row['storage_backend']!=workspace_backend():continue
+                if _clean_registered(row['id'],row['storage_key']):recovered.append(str(row['id']))
+        except task_locks.LockBusy:continue
     return recovered
 
 @contextmanager
 def _workspace(context):
     identifier=uuid4().hex;key=f'local-workspace/{context.generation}/{identifier}'
     def register(c,task):
-        return c.execute("INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key) VALUES (%s,%s,'PROCESSING_WORKSPACE',%s) RETURNING id",(task['id'],task['user_id'],key)).fetchone()['id']
+        return c.execute("INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key,storage_backend) VALUES (%s,%s,'PROCESSING_WORKSPACE',%s,%s) RETURNING id",(task['id'],task['user_id'],key,workspace_backend())).fetchone()['id']
     asset=context.fenced_write(register);path,_=_workspace_path(key)
     try:
         # Directory creation shares the task fence, so a paused old Worker
@@ -79,9 +101,10 @@ def _workspace(context):
         context.fenced_write(lambda c,task: path.mkdir(mode=0o700))
         yield path
     finally:
-        if not _clean_registered(asset,key):raise AdapterError('internal')
+        if maintenance.ready() and not _clean_registered(asset,key):raise AdapterError('internal')
 
 def download_original(key,path,checkpoint):
+    maintenance.ensure_open()
     response=object_store.client().get_object(Bucket=object_store.bucket(),Key=key)
     body=response['Body'];expected=response.get('ContentLength');total=0;deadline=time.monotonic()+1800
     try:
@@ -91,6 +114,7 @@ def download_original(key,path,checkpoint):
                 checkpoint()
                 if time.monotonic()>deadline:raise AdapterError('internal')
                 chunk=body.read(min(1024*1024,MAX_BYTES-total+1))
+                maintenance.ensure_open()
                 if not chunk:break
                 total+=len(chunk)
                 if total>MAX_BYTES:raise AdapterError('internal')
@@ -103,6 +127,7 @@ def _tag(value):
     return value
 
 def _record_finish(context,status,response=None,error=None):
+    maintenance.ensure_open()
     usage=response.usage if response is not None else error.usage if error is not None else TokenUsage()
     request_id=response.request_id if response is not None else error.request_id if error is not None else None
     try:
@@ -114,8 +139,46 @@ def _record_finish(context,status,response=None,error=None):
         c.execute('''UPDATE model_calls SET status=%s,request_id=%s,input_tokens=%s,output_tokens=%s,cached_tokens=%s,estimated_cost=%s,currency=%s,model_version=COALESCE(%s,model_version),adapter_version=COALESCE(%s,adapter_version),error_category=%s,finished_at=now() WHERE task_id=%s AND lease_generation=%s''',(status,request_id,usage.input_tokens,usage.output_tokens,usage.cached_tokens,usage.estimated_cost,usage.currency,response.model_version if response else None,response.adapter_version if response else None,error.failure_category if error else None,task['id'],context.generation))
     context.fenced_write(write)
 
-def prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
+
+def _read_frame(context,path):
+    _check(context)
+    data=path.read_bytes()
+    _check(context)
+    return data
+
+class _AudioReader:
+    """An owned audio stream that checks the maintenance gate around file I/O."""
+    def __init__(self,context,path):
+        self.context=context
+        self._check()
+        self.stream=path.open('rb')
+        try:self._check()
+        except BaseException:self.stream.close();raise
+    def _check(self):
+        # The adapter checkpoint and Worker heartbeat already check the lease.
+        maintenance.ensure_open()
+        if self.context.cancelled.is_set():
+            raise ProcessingCancelled('Processing cancelled')
+    def read(self,size=-1):
+        try:
+            self._check()
+            data=self.stream.read(size)
+            self._check()
+            return data
+        except BaseException:
+            self.close()
+            raise
+    def close(self):self.stream.close()
+    @property
+    def closed(self):return self.stream.closed
+    def __enter__(self):
+        try:self._check();return self
+        except BaseException:self.close();raise
+    def __exit__(self,*args):self.close()
+
+def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
     """One adapter attempt; never invokes complete or automatically retries."""
+    maintenance.ensure_open()
     try:
         _check(context)
         def source(c,task):
@@ -127,7 +190,7 @@ def prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
         with _workspace(context) as directory:
             original=directory/'original';download_original(key,original,lambda:_check(context))
             prepared=prepare_media(original,directory,checkpoint=lambda:_check(context))
-            request=ModelRequest(prepared.duration_seconds,tuple(VisualEvidence(f.timestamp_seconds,f.path.read_bytes(),track_index=getattr(f,'track_index',0)) for f in prepared.frames),tuple(AudioEvidence(a.start_seconds,a.end_seconds,lambda p=a.path:p.open('rb'),track_index=getattr(a,'track_index',i)) for i,a in enumerate(prepared.audio_tracks)),tuple(prepared.limitations),language=language,timeout_seconds=float(os.getenv('MODEL_ADAPTER_TIMEOUT_SECONDS','120')))
+            request=ModelRequest(prepared.duration_seconds,tuple(VisualEvidence(f.timestamp_seconds,_read_frame(context,f.path),track_index=getattr(f,'track_index',0)) for f in prepared.frames),tuple(AudioEvidence(a.start_seconds,a.end_seconds,lambda p=a.path:_AudioReader(context,p),track_index=getattr(a,'track_index',i)) for i,a in enumerate(prepared.audio_tracks)),tuple(prepared.limitations),language=language,timeout_seconds=float(os.getenv('MODEL_ADAPTER_TIMEOUT_SECONDS','120')))
             if not 0<request.timeout_seconds<=3600:raise AdapterError('internal')
             model=_tag(adapter.model_version);version=_tag(adapter.adapter_version)
             def begin(c,task):
@@ -170,3 +233,9 @@ def prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
         context.fail(error.failure_category,'MODEL_'+error.kind.upper());raise
     except Exception:
         context.fail('INTERNAL','PROCESSING_FAILED');raise AdapterError('internal') from None
+
+
+def prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
+    from app.task_locks import producer
+    with producer(context.id):
+        return _prepare_and_analyze(context,adapter,language)

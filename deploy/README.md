@@ -1,6 +1,10 @@
 # 本地运行与工作包交付
 
-**CR-001版本提示：** 本文现有命令和S3-01～10小节描述尚未切换的S3-10实现；其中purpose授权、删除回执/管理员人工页和BACKUP_INVENTORY_CONFIRMED不是新产品要求。新目标见[ADR-005](../docs/adr/ADR-005-cr-001-deletion-troubleshooting.md)及[工作包](../docs/CR-001_IMPLEMENTATION_PLAN.md)。本轮只改文档，不改Compose/镜像/依赖，不执行命令或处置数据。
+> **S3-01～S3-10 历史部署记录。** 以下项目、命令和权限描述属于旧基线。正式本机部署请使用 [WP07-A 执行清单](../docs/CR-WP07A_FORMAL_RUNBOOK.md)，阶段和待办见[实施计划](../docs/IMPLEMENTATION_PLAN.md#当前交付状态)。
+
+**轻量化基线（2026-11-04）：** L/R已批准，当前目标为UUID请求编号+任务版本CAS、两类DB权限、正常取消/task SH-EX候选、四态清理及三维护入口；010仅WP02，011后移WP04。[WP01当前契约](../docs/archive/wp/CR-WP01_CONTRACT.md)为目标，本指南S3-10操作仍属未切换实现，不代表新契约已通过，不执行本轮命令。
+
+**CR-001版本提示：** 本文现有命令和S3-01～10小节描述尚未切换的S3-10实现；其中purpose授权、删除回执/管理员人工页和BACKUP_INVENTORY_CONFIRMED不是新产品要求。新目标见[ADR-005](../docs/adr/ADR-005-cr-001-deletion-troubleshooting.md)及[工作包](../docs/archive/cr/CR-001_IMPLEMENTATION_PLAN.md)。本轮只改文档，不改Compose/镜像/依赖，不执行命令或处置数据。
 
 从 `deploy/` 目录运行。需要 Docker Desktop（Compose v2）；当前配置将数据库和对象存储留在私有容器网络，仅把 API 绑定到本机 `127.0.0.1:8000`。`deploy/.env.example` 只含开发用占位凭据，不含 Qwen Key；Compose 不引用仓库根目录 `.env`，模型调用保持关闭。正式使用或允许局域网访问前必须替换开发凭据并重新审查网络边界。
 
@@ -205,7 +209,7 @@ docker compose --env-file .env.example up -d api
 
 ## S3-10 非模型回归与容量基线
 
-固定回归入口、236 项后端证据、7 类界面交互检查、5 人上传/10–30 人读接口的实际测量，以及 22 个 E2E 场景的覆盖边界统一见 [REGRESSION_BASELINE.md](../docs/REGRESSION_BASELINE.md)。该文件包含完整重跑命令，避免将测试操作与生产运行混用。
+固定回归入口、236 项后端证据、7 类界面交互检查、5 人上传/10–30 人读接口的实际测量，以及 22 个 E2E 场景的覆盖边界统一见 [REGRESSION_BASELINE.md](../docs/archive/s3/REGRESSION_BASELINE.md)。该文件包含完整重跑命令，避免将测试操作与生产运行混用。
 
 测试与容量 runner 使用显式 `_test` 数据库、唯一 schema/私有 bucket 和合成媒体，不读取真实 `.env`，不发起模型调用。测量时不要并行运行完整回归或重建数据库；不以本轮短时离线基线推断长视频、真实模型或完整备份恢复已经通过。S3-10 完成后停止，S3-11 的每个计费批次仍需单独批准。
 

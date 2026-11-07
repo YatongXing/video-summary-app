@@ -1,4 +1,5 @@
 """Transactional task state and quota operations; no scheduling or model calls."""
+from app import maintenance
 from datetime import datetime, timedelta, timezone
 import math
 import os
@@ -73,8 +74,10 @@ def _quota(u,now):
     return {'credits':None if unlimited else u['credits_available'],'unlimited':unlimited,'recovery_seconds':seconds}
 
 def quota(user_id):
+    maintenance.ensure_open()
     with connect() as c:
         u=_user(c,user_id);now=utcnow();_recover(c,u,now)
+        maintenance.ensure_open()
         return _quota(u,now)
 
 def _audit(c,t,reason,result,now):
@@ -100,35 +103,49 @@ def _metadata(c,t,u,now):
             'target_seconds':1200 if t['duration_seconds'] is not None and float(t['duration_seconds'])==3600 else None}
 
 def get_task(task_id,user_id):
+    maintenance.ensure_open()
     with connect() as c:
         u,t=_locks(c,task_id,user_id)
+        maintenance.ensure_open()
         return _metadata(c,t,u,utcnow())
 
 def list_tasks(user_id,limit=50,offset=0):
+    maintenance.ensure_open()
     if not 1<=limit<=100 or offset<0: raise HTTPException(422,'分页参数无效。')
     with connect() as c:
         u=_user(c,user_id);now=utcnow()
         rows=c.execute('SELECT * FROM tasks WHERE user_id=%s AND deletion_requested_at IS NULL AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s',(user_id,limit,offset)).fetchall()
         from app.deletion_control import blocked
+        maintenance.ensure_open()
         return [_metadata(c,t,u,now) for t in rows if not blocked(t['id'])]
 
 def cancel_task(task_id,user_id):
+    maintenance.ensure_open()
     with connect() as c:
         u,t=_locks(c,task_id,user_id);now=utcnow()
-        if t['status'] in ('SUCCEEDED','CANCELLED'): return _metadata(c,t,u,now)
+        if t['status'] in ('SUCCEEDED','CANCELLED'):
+            result=_metadata(c,t,u,now)
+            maintenance.ensure_open()
+            return result
         if t['status']=='FAILED': raise HTTPException(409,'失败任务可重试，当前不能取消。')
         c.execute("UPDATE tasks SET status='CANCELLED',failure_category='USER_CANCELLED',failure_code='USER_CANCELLED',finished_at=%s,lease_owner=NULL,lease_expires_at=NULL,next_retry_at=NULL WHERE id=%s",(now,task_id))
         c.execute("UPDATE task_attempts SET status='CANCELLED',failure_category='USER_CANCELLED',failure_code='USER_CANCELLED',finished_at=%s WHERE task_id=%s AND status='PROCESSING'",(now,task_id))
         _audit(c,t,'USER_CANCELLED','CANCELLED',now)
-        return _metadata(c,_task(c,task_id,user_id),u,now)
+        result=_metadata(c,_task(c,task_id,user_id),u,now)
+        maintenance.ensure_open()
+        return result
 
 def request_retry(task_id,user_id,request_key,source='USER'):
+    maintenance.ensure_open()
     if source not in ('USER','SYSTEM'): raise ValueError('Invalid retry source')
     try: request_key=str(UUID(str(request_key)))
     except (ValueError,TypeError,AttributeError): raise HTTPException(422,'重试请求标识无效。') from None
     with connect() as c:
         u,t=_locks(c,task_id,user_id);now=utcnow()
-        if c.execute('SELECT id FROM retry_events WHERE task_id=%s AND request_key=%s',(task_id,request_key)).fetchone(): return _metadata(c,t,u,now)
+        if c.execute('SELECT id FROM retry_events WHERE task_id=%s AND request_key=%s',(task_id,request_key)).fetchone():
+            result=_metadata(c,t,u,now)
+            maintenance.ensure_open()
+            return result
         if t['retry_count']>=20: raise HTTPException(409,'已达到累计 20 次重试上限。')
         if t['cooldown_until'] and now<t['cooldown_until']: raise HTTPException(429,'任务正在冷却，请稍后重试。')
         if t['status']!='FAILED': raise HTTPException(409,'当前任务状态不允许重试。')
@@ -141,14 +158,18 @@ def request_retry(task_id,user_id,request_key,source='USER'):
         c.execute('INSERT INTO retry_events(task_id,user_id,request_key,source,accepted_at,cooldown_triggered) VALUES (%s,%s,%s,%s,%s,%s)',(task_id,user_id,request_key,source,now,triggered))
         c.execute("UPDATE tasks SET status='QUEUED',retry_count=retry_count+1,cooldown_level=%s,cooldown_until=%s,next_retry_at=%s,timeout_retry_count=%s,failure_category=NULL,failure_code=NULL,started_at=NULL,finished_at=NULL WHERE id=%s",(level,until,until,timeout_count,task_id))
         _audit(c,t,'RETRY_'+source,'QUEUED',now)
-        return _metadata(c,_task(c,task_id,user_id),u,now)
+        result=_metadata(c,_task(c,task_id,user_id),u,now)
+        maintenance.ensure_open()
+        return result
 
 def start_task(task_id,worker_id='worker'):
+    maintenance.ensure_open()
     from app.queue import start_task as start
     return start(task_id,worker_id)
 
 
 def _start_locked(c,u,t,now,worker_id):
+    maintenance.ensure_open()
     from app.queue import settings
     task_id=t['id']
     if u['disabled_at'] is not None: raise HTTPException(409,'账户已停用，不能开始任务。')
@@ -156,7 +177,9 @@ def _start_locked(c,u,t,now,worker_id):
         if t['lease_owner']!=worker_id: raise HTTPException(409,'任务已由其他 Worker 开始。')
         from app.queue import assert_fence
         assert_fence(t,u,t['lease_generation'],worker_id,now)
-        return _metadata(c,t,u,now)
+        result=_metadata(c,t,u,now)
+        maintenance.ensure_open()
+        return result
     if t['status']!='QUEUED': raise HTTPException(409,'当前任务不能开始。')
     if t['cooldown_until'] and now<t['cooldown_until']: raise HTTPException(429,'任务正在冷却。')
     if u['role']=='USER' and c.execute("SELECT id FROM tasks WHERE user_id=%s AND status='PROCESSING' AND id<>%s",(u['id'],task_id)).fetchone(): raise HTTPException(409,'用户已有活动任务。')
@@ -175,19 +198,26 @@ def _start_locked(c,u,t,now,worker_id):
     c.execute("INSERT INTO task_attempts(task_id,user_id,attempt_number,lease_generation,status,started_at) VALUES (%s,%s,%s,%s,'PROCESSING',%s)",(task_id,u['id'],number,generation,now))
     c.execute("UPDATE tasks SET status='PROCESSING',lease_generation=%s,lease_owner=%s,started_at=%s,finished_at=NULL,lease_expires_at=%s,last_heartbeat_at=%s WHERE id=%s",(generation,worker_id,now,now+timedelta(seconds=settings()['lease']),now,task_id))
     _audit(c,t,'START','PROCESSING',now)
-    return _metadata(c,_task(c,task_id,u['id']),u,now)
+    result=_metadata(c,_task(c,task_id,u['id']),u,now)
+    maintenance.ensure_open()
+    return result
 
 def _finish(task_id,generation,category=None,failure_code=None,owner=None):
+    maintenance.ensure_open()
     from app.queue import assert_fence
     with connect() as c:
         u,t=_locks(c,task_id);now=utcnow()
         if t['lease_generation']!=generation: raise HTTPException(409,'处理尝试已失效。')
         if t['status'] in ('FAILED','CANCELLED','SUCCEEDED'): return _metadata(c,t,u,now)
         assert_fence(t,u,generation,owner,now)
-        return _finish_locked(c,u,t,now,category,failure_code)
+        maintenance.ensure_open()
+        result=_finish_locked(c,u,t,now,category,failure_code)
+        maintenance.ensure_open()
+        return result
 
 
 def _finish_locked(c,u,t,now,category=None,failure_code=None):
+    maintenance.ensure_open()
     task_id=t['id']
     generation=t['lease_generation']
     if category is not None and (not isinstance(category,str) or category not in CATEGORIES): category='UNKNOWN'
@@ -205,7 +235,9 @@ def _finish_locked(c,u,t,now,category=None,failure_code=None):
     c.execute('UPDATE tasks SET status=%s,failure_category=%s,failure_code=%s,finished_at=%s,lease_owner=NULL,lease_expires_at=NULL WHERE id=%s',(status,category,code,now,task_id))
     c.execute("UPDATE task_attempts SET status=%s,failure_category=%s,failure_code=%s,finished_at=%s WHERE task_id=%s AND lease_generation=%s AND status='PROCESSING'",(status,category,code,now,task_id,generation))
     _audit(c,t,category or 'OUTPUT_VALIDATED',status,now)
-    return _metadata(c,_task(c,task_id,u['id']),u,now)
+    result=_metadata(c,_task(c,task_id,u['id']),u,now)
+    maintenance.ensure_open()
+    return result
 
 def fail_task(task_id,generation,category='UNKNOWN',failure_code=None,owner=None):
     if category is None: category='UNKNOWN'

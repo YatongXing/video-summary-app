@@ -1,0 +1,280 @@
+{
+  "http_load": {
+    "scope": "12 actual HTTP exact lookup requests / 4 threads; not model processing SLO",
+    "raw": [
+      {
+        "status": 200,
+        "seconds": 0.06300000000010186
+      },
+      {
+        "status": 200,
+        "seconds": 0.04700000000048021
+      },
+      {
+        "status": 200,
+        "seconds": 0.06300000000010186
+      },
+      {
+        "status": 200,
+        "seconds": 0.04700000000048021
+      },
+      {
+        "status": 200,
+        "seconds": 0.06199999999989814
+      },
+      {
+        "status": 200,
+        "seconds": 0.06199999999989814
+      },
+      {
+        "status": 200,
+        "seconds": 0.046000000000276486
+      },
+      {
+        "status": 200,
+        "seconds": 0.046000000000276486
+      },
+      {
+        "status": 200,
+        "seconds": 0.04700000000048021
+      },
+      {
+        "status": 200,
+        "seconds": 0.04700000000048021
+      },
+      {
+        "status": 200,
+        "seconds": 0.04700000000048021
+      },
+      {
+        "status": 200,
+        "seconds": 0.04700000000048021
+      }
+    ],
+    "median_seconds": 0.04700000000048021,
+    "p90_seconds": 0.06300000000010186
+  },
+  "status": "ISOLATED_AUTOMATION_PASSED_WITH_EXPLICIT_NOT_EXECUTED_BOUNDARIES",
+  "external_model_calls": 0,
+  "runs": {
+    "backend_final": {
+      "passed": 333,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 152.22,
+      "source": "approved B01 one-character fix applied; final run replaces pre-fix 333"
+    },
+    "migration010": {
+      "passed": 42,
+      "seconds": 17.64,
+      "scope": "original 001-010 software-only temporary copy; 011 excluded; unchanged guards/checksums"
+    },
+    "linux_physical": {
+      "passed": 6,
+      "seconds": 38.92,
+      "scope": "real Linux Docker/FFmpeg/ffprobe and independent Workers; original CR-WP04 compatible driver resources"
+    },
+    "mock_browser": {
+      "groups": 22,
+      "exit_code": 0,
+      "scope": "actual Chrome with mock HTTP seam; not real backend integration"
+    },
+    "frontend_build": {
+      "exit_code": 0,
+      "seconds": 1.06
+    },
+    "real_http_final": {
+      "passed": 10,
+      "failed": 0,
+      "seconds": 55.55,
+      "scope": "single whole-file run after fixture-order correction; direct real API, two Workers, PostgreSQL, private RustFS",
+      "WP06_DIRECT": "1",
+      "command": "WP06_STATE=<isolated synthetic state> WP06_DIRECT=1 backend/.venv/Scripts/python.exe -m pytest backend/tests/test_cr_wp06_integration.py -q"
+    },
+    "real_browser": {
+      "checks": 8,
+      "browser": "Chrome/156.0.8078.81",
+      "status": "passed",
+      "scope": "same-origin real UI and backend; login/upload/worker/play/seek/support list and exact lookup/admin dismiss/admin own task",
+      "metrics": {
+        "duration": 30,
+        "currentTime": 5.153411,
+        "readyState": 4
+      },
+      "browser_and_profile_removed": true
+    },
+    "b01_targeted": {
+      "passed": 1,
+      "seconds": 21.39,
+      "scope": "real CONFIG retry success and commit-time SQLSTATE23514 atomic rollback, then recovery; included again in final ten"
+    }
+  },
+  "findings": [
+    {
+      "id": "W06-B01",
+      "status": "CLOSED_BY_USER_AUTHORIZED_FIX_AND_INDEPENDENT_RETEST",
+      "original": "parameterized psycopg LIKE S3% caused ProgrammingError before SQL asset query",
+      "fix": "escape literal percent as S3%%; no other business source change",
+      "source_sha256": "94675e810c6143a5550d3e0f0668972ac04274f25a9fa53c24c14edf41aad578",
+      "evidence": "BLOCKED/CONFIG actual CLI retry reaches COMPLETED and audit; deferred audit exception SQLSTATE23514 leaves exact control tuple unchanged",
+      "coverage_gap": "old audit failure test accepted broad psycopg.Error; this does not prove reaching intended commit failure; old test/report left unchanged",
+      "source_modified": true,
+      "authorization": "explicit user authorization for exact single percent escape; Coding performed; independent Testing verified"
+    }
+  ],
+  "boundaries": {
+    "stream": "32MiB synthetic MP4 plus free atom padding inserted through controlled maintenance fixture, not normal uploaded processing evidence; raw socket receive-window backpressure, revoke then incomplete original ContentLength and new Range404; already queued network bytes not retractable",
+    "expiry": "actual database clock near-expiry synthetic immutable row; no real 24h wait",
+    "persistent_fault": "controlled CONFIG/n5/31-minute PostgreSQL seam followed by real cleanup loop/CLI/health; not five physical backoff cycles",
+    "manual_acceptance": "not performed by product owner",
+    "wp07": "real M3, old deployment credentials/connections/drain, authorization termination and production restore opening NOT executed",
+    "s3_12": "no new content backups; production snapshot inventory and recovery opening NOT executed",
+    "model": "offline synthetic deterministic N2; no real Qwen/paid requests or quality claim",
+    "proxy": "normal browser Content-Length path exercised on older running proxy; new helper chunked branch verified by Coding only, pending independent fresh check if required"
+  },
+  "resources": {
+    "original_cr_wp04_compatibility_baseline_empty": true,
+    "original_cr_wp04_compatibility_final_containers_and_volumes_empty": true,
+    "final_regression_exact_resources_reclaimed": [
+      "vsa-wp04-wp06-regression",
+      "vsa-wp06-regression-s3"
+    ],
+    "old_shared_main": {
+      "id": "963d8aa91e",
+      "status": "RECLAIMED_BY_CODING",
+      "stop_exit_codes": [
+        0,
+        0
+      ],
+      "containers_volumes_network_absent": true,
+      "port_54945_closed": true,
+      "temporary_directory": "state.json tombstone only",
+      "source": "Coding cleanup handoff confirmed by Main"
+    },
+    "fresh_manual_environment": {
+      "id": "b44855a096",
+      "status": "RETAINED_FOR_MANUAL_ACCEPTANCE",
+      "services_running": 5,
+      "ready_http_status": 200,
+      "failure_injection_by_testing": false,
+      "source": "Coding status handoff confirmed by Main"
+    },
+    "browser_profile_removed": true
+  },
+  "CR_AC_matrix": {
+    "CR-AC-01": "PASS: final10 delete202/content404/jobCOMPLETED/actual original object absent; 333 cleanup SQL/content and asset coverage.",
+    "CR-AC-02": "PASS: Linux6 real producer/deletion race and late publication; 333 barriers.",
+    "CR-AC-03": "PASS: 333 storage failures/retry/error classifications; final10 physical S3/PG outage and CONFIG health/retry.",
+    "CR-AC-04": "PASS: mock22 role navigation and real browser retired entry absent.",
+    "CR-AC-05": "PASS: mock22 admin navigation; 333 retired cleanup HTTP rejection.",
+    "CR-AC-06": "PASS: real browser admin own metadata and final10 owner zh/en/export/video.",
+    "CR-AC-07": "PASS: final10 real cross-owner HTTP404; 333 no-support rejection.",
+    "CR-AC-08": "PASS: 42 UUID/schema and final10 duration86400.",
+    "CR-AC-09": "PASS: final10 replacement and old exact UUID404.",
+    "CR-AC-10": "PASS: 42 owner/task FK/unique and final10 multiple owners.",
+    "CR-AC-11": "PASS: real browser admin list with actual backend and final10 scope metadata.",
+    "CR-AC-12": "PASS: real browser exact UUID and final10 lookup.",
+    "CR-AC-13": "PASS: final10 summary/video/both HTTP content matrix plus 333 zh/en parameter matrix.",
+    "CR-AC-14": "PASS: final10 database-time near-expiry and 333 exact boundaries/source retention.",
+    "CR-AC-15": "PASS: final10 real socket revoke/newRange404 plus 333 read-yield barriers.",
+    "CR-AC-16": "PASS: 333 delete closes request and replay/intents; final10 task content404.",
+    "CR-AC-17": "PASS: rerun333 same-time FIFO cursor snapshot tests; real browser list.",
+    "CR-AC-18": "PASS: final10 and real browser admin dismiss/request404/source retained.",
+    "CR-AC-19": "PASS: 42 cross-user concurrent and forced UUID conflict; final10 dual actual HTTP create.",
+    "CR-AC-20": "PASS: final10 double create/regenerate yields201/409; 42 two-connection unique slot.",
+    "CR-AC-21": "PASS: final10 expired/revoked/replaced exact UUID404; old delete does not revoke new UUID.",
+    "CR-AC-22": "PASS: rerun333 per-event 90-day/content-free audit and unfinished-control tests.",
+    "CR-AC-23": "PASS: rerun333 USER/anonymous/deactivated/old session and scope isolation; actual cross-owner HTTP.",
+    "CR-AC-24": "PASS: rerun333 safety invariants plus Linux6 real mutex/concurrent producer and final10 actual physical isolation."
+  },
+  "supplementary_matrix": {
+    "CR-T25": "PARTIAL: 42 preserves old consents; 333 rejects legacy new-code routes. Formal old consent termination/M3 remains WP07 NOT_EXECUTED.",
+    "CR-T26": "PASS: 333 lost-response/stale version/commit failure; final10 actual dual create/regenerate201/409, exact old ID cannot follow.",
+    "CR-T27": "PASS: 42 DST exact86400;333 database-clock/lock/source retention and near-expiry final10. No real24h wait.",
+    "CR-T28": "PASS:333 fixed/source separate counters and creation budget; mock22 pagination. New12-request/4thread actual sample below60/min; not sustained-capacity claim.",
+    "CR-T29": "PASS:42 immutable request identity/scope/time/close and version constraints;333 session/CSRF; final10 UUID only locator.",
+    "CR-T30": "PASS_IN_ISOLATION:333 four-state/retry/budget/health;Linux6 mutex after DBdisconnect;final10 real CONFIG status/health/retry and explicit23514 commit rollback. Persistent threshold via controlled time/count fixture.",
+    "CR-T31": "PARTIAL:333 historical BACKUP unapproved stops overall while online clears, journal controls; real production recovery gate/WP07 NOT_EXECUTED.",
+    "CR-T32": "PARTIAL:42 original001-010 checksums/replay/failure/two migrators/two roles;333 final001-011 checksum/schema. Real M3/old deployment termination WP07 NOT_EXECUTED.",
+    "CR-T33": "PASS:333 event89/90/91day/unfinished controls and completion timestamp seams; no real90day wait.",
+    "CR-T34": "NOT_EXECUTED_DEPLOYMENT: no new content backup created by WP06; production infrastructure inventory/S3-12 delivery outside scope.",
+    "CR-T35": "PASS:333 locator/bucket/backend/path/version/multipart neighbor seams plus real private S3;Linux6 concurrent task isolation;final10 target absent while neighbor content remains."
+  },
+  "software_sha256": {
+    "backend/app/database.py": "f6e454874dae3c80be8109965b12ab80ff1007794d4a0db86e9a8cfce9135d86",
+    "backend/app/main.py": "f38ca513e91957ac31a87213503123a3ad3695ee90192e4c595d602614646220",
+    "backend/app/migrate.py": "d614f4496fcfdd774a2b740125b7f3a101c3d921963f129b38cf4be144797a3e",
+    "backend/app/models.py": "15a4e085b7b71806a3a94a1f42943fbdbf604903c0719d06d9cf06d74fe94750",
+    "backend/app/storage.py": "65129a82773a524c41b062c317c2a0cbfb8ab4380916077763a4985f724e0cd4",
+    "backend/app/worker.py": "113ce4370d33088260bdcffe10cb2b278527debf86926d334f6c9bafb3053391",
+    "backend/app/__init__.py": "6d32a3ea6b0fb5f066b26ca68ab95a003437f5d9f8f39a90bcc3f99421d9c43c",
+    "backend/app/auth.py": "7a44634d0c86bdcc41dd52550e01dfe819fe81cc028864c150c80a5fdcd2c967",
+    "backend/app/admin.py": "048ad027225d6bd0fc9c7e6e9cc08823b3ba9e580911f42212ad9e33350407ed",
+    "backend/app/media.py": "582da9021ec583ea24e94e6b2b256f24a21527f31d86c6ea691884451bd20992",
+    "backend/app/safe_download.py": "57ac0b877ec21fd8ec993fab5df18fa42f21905b7db6d716ffd1e4b7b4786a90",
+    "backend/app/object_store.py": "580a50de1c7a899f0112de980a4e51de5b6e3889472a425c11fd12cc5cbb6e72",
+    "backend/app/ingest.py": "701587ceb2242bfe573128fe86be71766c06bd3d40d0312e6ce3cba82b670b61",
+    "backend/app/tasks.py": "609d6c58e55f6129de6a57484c9fbe633d2bfd2dd4b6fac4b01903d60ba9fef8",
+    "backend/app/task_routes.py": "ba05a2c29e429b1aea6730d4e9689ceb994e8b55e372c8a512dd29fcd6c5683b",
+    "backend/app/queue.py": "011a5bea3c804ec4baa3a10ce68e4c03043858bfc06ee9c8eb27f1637e1e138e",
+    "backend/app/model_adapter.py": "f69b418ac41a4136135512d73ec756beb9042f39a0071d6ec40bb74efef92bc5",
+    "backend/app/preprocess.py": "abfc97373366d952ffe15ba78096fb5b15748f8cf6e082b7523f2bf3babb356f",
+    "backend/app/processing.py": "39462de4033da7f846e4dfb7e92ac7aeac79adb3a087431810cec789d3d19734",
+    "backend/app/results.py": "b229a0076673dcc002ba706815a12f9f5a27948eb6504a18ddb5089b20c3d4f5",
+    "backend/app/pipeline.py": "883856ce931271a4cbeb640766c47a3ad1346fac229ab01d2474f8dd727463d8",
+    "backend/app/cleanup.py": "276cb9ce76b83db632b30eedb0231c282d45eeaf3bcef396ba3b1dd80e827aa9",
+    "backend/app/cleanup_routes.py": "cfb03d7ad5c92b78d328e9eb771b54d5b86e9917048ba9df6dd869825c04af53",
+    "backend/app/deletion_control.py": "81ff5987d0c31344c586930450bde067c55b09cdda3c41be02843d6b606bb21b",
+    "backend/app/support_requests.py": "bba8a1a7eaa46a7db7e5fb60bcfc0cb662cfecb33e11c82c16dbd608c34a6da2",
+    "backend/app/task_locks.py": "3a43ae46d418dea7b5060b73f9bc78c7c35146c43a2804593cf95b913f714410",
+    "backend/app/cleanup_ops.py": "94675e810c6143a5550d3e0f0668972ac04274f25a9fa53c24c14edf41aad578",
+    "backend/app/migrations/001_initial_schema.sql": "246dc645f61770138648b8afdf27cea69283029031d4ca46722fd7f24bb48cb5",
+    "backend/app/migrations/002_auth.sql": "2ac3bb5609846bd560bf13033f36e118c7ef05fb26af5a1766ebb9dd60cb65db",
+    "backend/app/migrations/003_inputs.sql": "799ee805423e151f05cd83ab2795dd66cf6a8ebe596293791ec91987d86e65f6",
+    "backend/app/migrations/004_task_rules.sql": "c212c7235f20604f554f3b7a016d67244cfa1435439c09d44bb71783503b2ecd",
+    "backend/app/migrations/005_queue.sql": "3e0a90ef83d97453cfec34cfae026f0ee1f63f1d43ad7ec8e7ff78f7f992a713",
+    "backend/app/migrations/006_model_calls.sql": "3443e02303beeb178d4cc000734faf7f1dfef0b66b514cca8cc1ba37a3739f7f",
+    "backend/app/migrations/007_task_results.sql": "ce980a3e24ba4c75eacca9d4846a3b271859b1b83d6add2a7011162b94536232",
+    "backend/app/migrations/008_cleanup.sql": "9f1fa0882639ee0a712131dd632ed7f16efe696be2ec2c88165464ef866a9e04",
+    "backend/app/migrations/009_deletion_control.sql": "247406e2968cf2c709e082fde64587f6b6b2675bd9f0a2009995869da6d7af0f",
+    "backend/app/migrations/010_cr_support_expand.sql": "df119b7fbf4150c480f7bef96c559d777e74082bef6c1de31d3b80ba9cd05d47",
+    "backend/app/migrations/011_cr_cleanup.sql": "b69ddc558587b7c8221ecbac862592512d78cae11b0a40a2b5d4835cd393a722",
+    "frontend/src/style.css": "b01b40165f81309335da4ade30ac8deb995bf1dbb2ed9929b04ba4bbc8f362ee"
+  },
+  "test_sha256": {
+    "backend/tests/test_cr_wp06_integration.py": "c8cdb26110131aa6cad83cfa7c6215b60c168334c52406996cc37a43a097164a",
+    "frontend/tests/wp06-real.mjs": "2c2e0c3e95e1a5f200e02ede0e3fbc0bb7cff774672097be0ea3ce2553e6548f"
+  },
+  "diagnostic_history": [
+    {
+      "status": "PARTIAL_FAILURE",
+      "case": "stream and ops initial group",
+      "passed": 1,
+      "failed": 1,
+      "seconds": 17.01,
+      "finding": "W06-B01",
+      "not_added_to_final_pass_counts": true
+    },
+    {
+      "status": "PASSED_PRE_FIX",
+      "case": "backend333",
+      "seconds": 155.81,
+      "superseded_by_final_backend_run": true
+    },
+    {
+      "status": "PASSED_INITIAL_PROXY",
+      "case": "overlapping real HTTP seven cases",
+      "passed": 7,
+      "seconds": 35.14,
+      "not_added_to_final_ten": true
+    },
+    {
+      "status": "TEST_FIXTURE_CORRECTED",
+      "details": "audit assertion literal percent escaped and final regenerate moved to surviving task; ten whole-file verification succeeded"
+    }
+  ],
+  "evidence_file_sha256": {
+    "backend/tests/test_cr_wp06_integration.py": "c8cdb26110131aa6cad83cfa7c6215b60c168334c52406996cc37a43a097164a",
+    "frontend/tests/wp06-real.mjs": "2c2e0c3e95e1a5f200e02ede0e3fbc0bb7cff774672097be0ea3ce2553e6548f"
+  }
+}
