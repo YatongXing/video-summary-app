@@ -18,7 +18,7 @@
 | WP05 | 当时的排障前端已实现并验收，相关页面和交互随 CR-002 退役。 | [WP05 验证](archive/wp/CR-WP05_VALIDATION_REPORT.md) |
 | WP06 | 原 CR-001 集成结果保留。CR-002 及新版 WP06 的最终页面已获负责人验收，含 Task ID 搜索和显示调整。原人工实例已回收。 | [旧 WP06](archive/wp/CR-WP06_VALIDATION_REPORT.md) · [新版 WP06](archive/wp/CR-002_WP06_VALIDATION_REPORT.md) · [最终调整](archive/cr/CR-002_ACCEPTANCE_ADJUSTMENTS.md) |
 | WP07 | 准备审核完成，负责人选择 WP07-A 全新本机部署。旧实例迁移、旧授权终止和凭据失权方案不适用于路径 A。 | [准备审核](archive/wp/CR-WP07_PREPARATION_REVIEW.md) · [路径 A](CR-WP07A_LOCAL_DEPLOYMENT_PLAN.md) |
-| WP07-A | G-01 持久维护门禁、G-02 三种数据库身份隔离、G-03 Windows 巡检已实现并隔离验证。最终离线回归 322 项通过，实际 Docker 和浏览器验收通过，测试事件写入本地文件。正式通知及创建、发布和开门待批。 | [实施](CR-WP07A_IMPLEMENTATION_REPORT.md) · [测试](CR-WP07A_TESTING_REPORT.md) · [安全](CR-WP07A_SECURITY_REVIEW.md) · [执行清单](CR-WP07A_FORMAL_RUNBOOK.md) |
+| WP07-A | A、B、C1 与 C2 均已验收。vsa-local 保持 OPEN，Web 仅发布至 127.0.0.1:58080。正式巡检使用 Windows Application 日志和当前用户桌面通知，真实 Qwen 关闭。 | [部署移交](WP07A_DEPLOYMENT_HANDOFF.md) · [历史实施](CR-WP07A_IMPLEMENTATION_REPORT.md) · [隔离测试](CR-WP07A_TESTING_REPORT.md) · [安全](CR-WP07A_SECURITY_REVIEW.md) · [执行清单](CR-WP07A_FORMAL_RUNBOOK.md) |
 
 历史处置已移除旧 manual 4 个容器、WP06 5 个容器及其专用网络和临时数据，以及全部 13 个数据卷。WP06 留有停止状态文件，旧 manual 专用网络和镜像保留。最后一次处置盘点为 0 个容器、0 个卷。剩余六卷按负责人明确指示直接删除，原审计和删除作业状态没有补记为验证通过，外部副本盘点仍属独立事项。 [处置记录](CR-WP07A_FORMAL_RUNBOOK.md#2026-11-07-剩余六卷最终处置)
 
@@ -66,7 +66,7 @@ WP03认证授权/隔离、WP04删除/并发、WP07正式切换/恢复/部署定�
 
 ## 开始与停止门槛
 
-1. **部署审批：** 目前有 WP07-A 隔离验证证据。候选镜像准备和正式创建、发布、开门按[执行清单](CR-WP07A_FORMAL_RUNBOOK.md)分别控制。文档整合在验收点结束。
+1. **正式部署维护**。现有 vsa-local 按[部署移交](WP07A_DEPLOYMENT_HANDOFF.md)运行。未来创建、发布、维护开门或扩大开放范围继续按[执行清单](CR-WP07A_FORMAL_RUNBOOK.md)分阶段授权。
 2. **模型计费门槛：** S3-11 每批先给出目的、输入数据、调用/重试量、费用估算、失败收费风险、外发字段与硬预算；产品负责人明确批准该批后才能调用。已有 Key 不代表批准。
 3. **真实素材外发门槛：** 受控媒体访问 URL 的公网边界、撤销/过期和访问日志通过验证，产品负责人批准真实素材范围。先用非敏感或官方公开样本；不直接转发用户原始 URL。
 4. **发布门槛：** 关键 AC、删除和跨用户隔离测试通过，管理员账户安全交付；P90、质量和容量若未达标，报告实际限制，不以架构批准替代证据。

@@ -2,7 +2,7 @@
 
 [项目首页](../README.md)
 
-**截至 2026-11-07**，CR-002 及新版 WP06 已验收，WP07-A 已完成合成环境的部署与安全验证。正式本机部署仍在审批点。查看各包实际进度、后续授权和历史资源状态。 [阶段状态](IMPLEMENTATION_PLAN.md#当前交付状态)
+**截至 2026-11-08**，WP07-A 已通过正式本机部署与 C2 合成业务验收。vsa-local 保持 OPEN，入口仅限 127.0.0.1:58080。运行基线、巡检及维护入口见 [WP07-A 部署移交](WP07A_DEPLOYMENT_HANDOFF.md)。
 
 ## 现行规范与操作入口
 
@@ -33,14 +33,16 @@
 
 ## 最新验收和部署证据
 
+正式 A、B、C1、C2 原件、归档 SHA-256 清单及恢复方式见[部署移交](WP07A_DEPLOYMENT_HANDOFF.md#证据与归档)。下表的隔离验证资料继续作为历史证据。
+
 | 阶段 | 已保留的证据 |
 | --- | --- |
 | CR-002 初轮 | [实施与安全交接](archive/cr/CR-002_IMPLEMENTATION_REPORT.md) · [独立测试](archive/cr/CR-002_TESTING_REPORT.md) · [原始证据](baseline/cr-002-testing.json) |
 | 新版 WP06 | [系统验证](archive/wp/CR-002_WP06_VALIDATION_REPORT.md) · [人工指南和退役记录](archive/wp/CR-002_WP06_MANUAL_ACCEPTANCE.md) · [最终验收调整](archive/cr/CR-002_ACCEPTANCE_ADJUSTMENTS.md) · [补充独立测试](archive/cr/CR-002_ACCEPTANCE_ADJUSTMENTS_TESTING.md) · [调整原始证据](baseline/cr-002-acceptance-testing.json) |
 | WP07 准备 | [只读准备审核](archive/wp/CR-WP07_PREPARATION_REVIEW.md) · [选路前方案](archive/wp/CR-WP07_EXECUTION_PLAN.md) · [原始盘点](baseline/cr-wp07-preparation.json)。执行路径后来确定为 WP07-A 首次部署。 |
-| WP07-A 隔离验证 | [实施报告](CR-WP07A_IMPLEMENTATION_REPORT.md) · [测试报告](CR-WP07A_TESTING_REPORT.md) · [安全复核](CR-WP07A_SECURITY_REVIEW.md) · [冻结契约](CR-WP07A_IMPLEMENTATION_CONTRACT.md) · [测试规格](CR-WP07A_TEST_SPEC.md) · [原始测试记录](baseline/cr-wp07a-testing.json) · [当时的指纹](baseline/cr-wp07a-fingerprints.json) |
+| WP07-A 隔离验证 | [实施报告](CR-WP07A_IMPLEMENTATION_REPORT.md) · [测试报告](CR-WP07A_TESTING_REPORT.md) · [安全复核](CR-WP07A_SECURITY_REVIEW.md) · [历史实施审批契约（归档前版本）](https://github.com/YatongXing/video-summary-app/blob/6aed230f3095e671d1b7a6330eaac994068c384f/docs/CR-WP07A_IMPLEMENTATION_CONTRACT.md) · [测试规格](CR-WP07A_TEST_SPEC.md) · [原始测试记录](baseline/cr-wp07a-testing.json) · [当时的指纹](baseline/cr-wp07a-fingerprints.json) |
 
-原始 JSON、截图和指纹保存在 [baseline/](baseline/)。指纹记录的是对应交付时的版本。历史报告中的“未授权”“待验收”或资源数量是当时记录，当前状态以实施计划和正式执行清单为准。
+原始 JSON、截图和指纹保存在 [baseline/](baseline/)。指纹记录的是对应交付时的版本。历史报告中的“未授权”“待验收”或资源数量是当时记录，当前正式实例状态以部署移交和实施计划为准。
 
 ## 文档清理状态
 
