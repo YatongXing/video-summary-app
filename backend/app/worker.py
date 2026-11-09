@@ -233,6 +233,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
     cleanup_thread = None
     try:
+        processor = _configured_processor()
         from app.deletion_control import replay_journal, prune_journal
         if maintenance.ready():
             try:replay_journal()
@@ -255,15 +256,6 @@ def main() -> int:
                     stop_event.wait(interval)
             cleanup_thread = threading.Thread(target=maintain, name='task-cleanup', daemon=True)
             cleanup_thread.start()
-        mode = os.getenv('WORKER_PROCESSOR_MODE', 'disabled')
-        if mode not in ('disabled', 'offline'):
-            raise ValueError('Unsupported processor mode')
-        if os.getenv('MODEL_CALLS_ENABLED', 'false').lower() != 'false':
-            raise ValueError('External model calls are not enabled in this work package')
-        processor = None
-        if mode == 'offline':
-            from app.pipeline import run_pipeline
-            processor = run_pipeline
         run(stop_event, interval_seconds=os.getenv('WORKER_POLL_SECONDS', '1'), processor=processor)
     except (ValueError, RuntimeError):
         logger.error('Worker configuration or deletion control is unavailable')
@@ -273,6 +265,21 @@ def main() -> int:
         if cleanup_thread is not None:
             cleanup_thread.join(timeout=5)
     return 0
+
+
+def _configured_processor():
+    mode = os.getenv('WORKER_PROCESSOR_MODE', 'disabled')
+    enabled = os.getenv('MODEL_CALLS_ENABLED', 'false').lower()
+    if mode == 'disabled' and enabled == 'false':
+        return None
+    from app.pipeline import run_pipeline
+    if mode == 'offline' and enabled == 'false':
+        return run_pipeline
+    if mode == 'qwen' and enabled == 'true':
+        from functools import partial
+        from app.qwen_adapter import QwenModelAdapter
+        return partial(run_pipeline, adapter=QwenModelAdapter.from_environment())
+    raise ValueError('Model mode and external-call setting do not match')
 
 
 if __name__ == '__main__':

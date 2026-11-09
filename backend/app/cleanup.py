@@ -175,7 +175,16 @@ def _delete_object(asset):
 
 def _physical(asset):
     maintenance.ensure_open()
-    if asset['storage_backend'].startswith('WORKSPACE'):
+    if asset['asset_kind'] == 'QWEN_TRANSFER':
+        from app.qwen_cloud import CloudVideoStore
+        try:
+            cloud = CloudVideoStore.from_environment()
+            if cloud is None:
+                raise ValueError('Missing OSS configuration')
+            cloud.remove(asset)
+        except Exception:
+            raise CleanupFailure('TRANSIENT','QWEN_TRANSFER_CLEANUP_PENDING') from None
+    elif asset['storage_backend'].startswith('WORKSPACE'):
         from app.processing import _workspace_path,_remove_workspace
         from app.processing import workspace_backend
         if asset['storage_backend']!=workspace_backend():raise CleanupFailure('CONFIG','WORKSPACE_UNCONFIRMED')

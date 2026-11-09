@@ -1,0 +1,6 @@
+ARG VSA_API_BASE=video-summary-app-wp07a-candidate:6aed230-8990a993
+FROM ${VSA_API_BASE}
+USER root
+RUN --mount=type=bind,from=oss_wheels,target=/wheels pip install --no-cache-dir --no-index --find-links=/wheels alibabacloud-oss-v2==1.4.1
+COPY app/cleanup.py app/model_adapter.py app/processing.py app/qwen_adapter.py app/qwen_cloud.py app/worker.py /srv/app/
+USER appuser

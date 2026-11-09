@@ -1,0 +1,5 @@
+ARG VSA_API_BASE
+FROM ${VSA_API_BASE}
+USER root
+RUN pip install --no-cache-dir --index-url https://pypi.org/simple alibabacloud-oss-v2==1.4.1
+USER appuser

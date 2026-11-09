@@ -1,7 +1,8 @@
 """Private media -> model candidate. Final output validation belongs to S3-08."""
 from app import maintenance
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
+import logging
 import os
 import re
 import shutil
@@ -11,6 +12,8 @@ from app import object_store, tasks
 from app.preprocess import prepare_media, PreprocessError
 from app.media import MAX_BYTES
 from app.model_adapter import ModelRequest, VisualEvidence, AudioEvidence, ModelResponse, TokenUsage, AdapterError, validate_response, validate_usage
+
+logger = logging.getLogger(__name__)
 
 class ProcessingCancelled(Exception):
     pass
@@ -73,7 +76,7 @@ def recover_workspaces():
     from app.cleanup import io_activity
     if not task_locks.producer_ready():return []
     with tasks.connect() as c:
-        rows=c.execute("SELECT * FROM media_assets WHERE asset_kind='PROCESSING_WORKSPACE' AND cleanup_state<>'DELETED'").fetchall()
+        rows=c.execute("SELECT * FROM media_assets WHERE asset_kind IN ('PROCESSING_WORKSPACE','QWEN_TRANSFER') AND cleanup_state<>'DELETED'").fetchall()
         maintenance.ensure_open()
     recovered=[]
     for row in rows:
@@ -84,10 +87,61 @@ def recover_workspaces():
                     if not task or task['user_id']!=row['user_id']:continue
                     if task['status']=='PROCESSING' and not task['deletion_requested_at'] and not task['deleted_at']:continue
                     maintenance.ensure_open()
-                if row['storage_backend']!=workspace_backend():continue
-                if _clean_registered(row['id'],row['storage_key']):recovered.append(str(row['id']))
+                if row['asset_kind'] == 'QWEN_TRANSFER':
+                    cleaned = _clean_cloud_asset(row)
+                else:
+                    if row['storage_backend']!=workspace_backend():continue
+                    cleaned = _clean_registered(row['id'],row['storage_key'])
+                if cleaned:recovered.append(str(row['id']))
         except task_locks.LockBusy:continue
     return recovered
+
+
+def _clean_cloud_asset(asset, cloud=None):
+    if not maintenance.ready():
+        return False
+    from app.qwen_cloud import CloudVideoStore
+    try:
+        store = cloud or CloudVideoStore.from_environment()
+        if store is None:
+            raise ValueError('Missing OSS configuration')
+        store.remove(asset)
+        maintenance.ensure_open()
+        with tasks.connect() as connection:
+            connection.execute("UPDATE media_assets SET cleanup_state='DELETED',deleted_at=now() WHERE id=%s",
+                               (asset['id'],))
+        return True
+    except Exception:
+        # Keep the opaque locator for the next recovery pass.
+        logger.warning('Temporary Qwen video cleanup pending for asset %s', asset['id'])
+        return False
+
+
+@contextmanager
+def _cloud_video(context, cloud, path, filename):
+    try:
+        cloud.check_bucket()
+    except Exception:
+        raise AdapterError('cloud_transfer') from None
+
+    def register(connection, task):
+        key = cloud.asset_key(task['id'], filename)
+        return connection.execute(
+            """INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key,storage_backend,storage_bucket,byte_size)
+               VALUES (%s,%s,'QWEN_TRANSFER',%s,%s,%s,%s) RETURNING *""",
+            (task['id'], task['user_id'], key, cloud.backend, cloud.bucket, path.stat().st_size),
+        ).fetchone()
+
+    asset = context.fenced_write(register)
+    try:
+        try:
+            url = cloud.upload(path, asset['storage_key'], lambda: _check(context))
+        except Exception:
+            _check(context)
+            raise AdapterError('cloud_transfer') from None
+        yield url
+    finally:
+        _clean_cloud_asset(asset, cloud)
 
 @contextmanager
 def _workspace(context):
@@ -103,21 +157,23 @@ def _workspace(context):
     finally:
         if maintenance.ready() and not _clean_registered(asset,key):raise AdapterError('internal')
 
-def download_original(key,path,checkpoint):
+def download_original(key,path,checkpoint,*,inline_limit=None):
     maintenance.ensure_open()
     response=object_store.client().get_object(Bucket=object_store.bucket(),Key=key)
     body=response['Body'];expected=response.get('ContentLength');total=0;deadline=time.monotonic()+1800
     try:
         if type(expected) is not int or not 0<expected<=MAX_BYTES:raise AdapterError('internal')
+        if inline_limit is not None and expected>inline_limit:raise AdapterError('inline_video_too_large')
+        limit = MAX_BYTES if inline_limit is None else inline_limit
         with path.open('xb') as target:
             while True:
                 checkpoint()
                 if time.monotonic()>deadline:raise AdapterError('internal')
-                chunk=body.read(min(1024*1024,MAX_BYTES-total+1))
+                chunk=body.read(min(1024*1024,limit-total+1))
                 maintenance.ensure_open()
                 if not chunk:break
                 total+=len(chunk)
-                if total>MAX_BYTES:raise AdapterError('internal')
+                if total>limit:raise AdapterError('internal')
                 target.write(chunk)
         if total!=expected:raise AdapterError('internal')
     finally:body.close()
@@ -185,17 +241,33 @@ def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
             if c.execute('SELECT id FROM model_calls WHERE task_id=%s AND lease_generation=%s',(task['id'],context.generation)).fetchone():raise AlreadyAnalyzed()
             row=c.execute("SELECT storage_key FROM media_assets WHERE task_id=%s AND user_id=%s AND asset_kind='ORIGINAL' AND cleanup_state='REGISTERED' ORDER BY created_at,id LIMIT 1",(task['id'],task['user_id'])).fetchone()
             if row is None:raise AdapterError('internal')
-            return row['storage_key']
-        key=context.fenced_write(source)
-        with _workspace(context) as directory:
-            original=directory/'original';download_original(key,original,lambda:_check(context))
-            prepared=prepare_media(original,directory,checkpoint=lambda:_check(context))
-            request=ModelRequest(prepared.duration_seconds,tuple(VisualEvidence(f.timestamp_seconds,_read_frame(context,f.path),track_index=getattr(f,'track_index',0)) for f in prepared.frames),tuple(AudioEvidence(a.start_seconds,a.end_seconds,lambda p=a.path:_AudioReader(context,p),track_index=getattr(a,'track_index',i)) for i,a in enumerate(prepared.audio_tracks)),tuple(prepared.limitations),language=language,timeout_seconds=float(os.getenv('MODEL_ADAPTER_TIMEOUT_SECONDS','120')))
+            return row['storage_key'],task.get('duration_seconds'),task.get('display_filename')
+        key,duration,filename=context.fenced_write(source)
+        with _workspace(context) as directory, ExitStack() as transfers:
+            original=directory/'original'
+            timeout=float(os.getenv('MODEL_ADAPTER_TIMEOUT_SECONDS','120'))
+            inline_limit=getattr(adapter,'max_inline_video_bytes',None)
+            if inline_limit is not None:
+                if duration is None:raise AdapterError('input')
+                cloud = getattr(adapter, 'cloud', None)
+                download_original(key,original,lambda:_check(context),inline_limit=None if cloud else inline_limit)
+                use_cloud = original.stat().st_size > inline_limit
+                url = transfers.enter_context(_cloud_video(context, cloud, original, filename)) if use_cloud else None
+                request=ModelRequest(float(duration),(),language=language,timeout_seconds=timeout,
+                    prompt_version=adapter.prompt_version,
+                    open_video=None if use_cloud else lambda:_AudioReader(context,original),video_url=url,
+                    task_id=str(context.id))
+                policy_version='qwen-oss-video-v1' if use_cloud else 'qwen-inline-video-v1'
+            else:
+                download_original(key,original,lambda:_check(context))
+                prepared=prepare_media(original,directory,checkpoint=lambda:_check(context))
+                request=ModelRequest(prepared.duration_seconds,tuple(VisualEvidence(f.timestamp_seconds,_read_frame(context,f.path),track_index=getattr(f,'track_index',0)) for f in prepared.frames),tuple(AudioEvidence(a.start_seconds,a.end_seconds,lambda p=a.path:_AudioReader(context,p),track_index=getattr(a,'track_index',i)) for i,a in enumerate(prepared.audio_tracks)),tuple(prepared.limitations),language=language,timeout_seconds=timeout)
+                policy_version=prepared.policy_version
             if not 0<request.timeout_seconds<=3600:raise AdapterError('internal')
             model=_tag(adapter.model_version);version=_tag(adapter.adapter_version)
             def begin(c,task):
                 attempt=c.execute('SELECT id FROM task_attempts WHERE task_id=%s AND lease_generation=%s',(task['id'],context.generation)).fetchone()
-                row=c.execute('''INSERT INTO model_calls(task_id,user_id,attempt_id,lease_generation,status,model_version,adapter_version,prompt_version,policy_version) VALUES (%s,%s,%s,%s,'RUNNING',%s,%s,%s,%s) ON CONFLICT (task_id,lease_generation) DO NOTHING RETURNING id''',(task['id'],task['user_id'],attempt['id'],context.generation,model,version,request.prompt_version,prepared.policy_version)).fetchone()
+                row=c.execute('''INSERT INTO model_calls(task_id,user_id,attempt_id,lease_generation,status,model_version,adapter_version,prompt_version,policy_version) VALUES (%s,%s,%s,%s,'RUNNING',%s,%s,%s,%s) ON CONFLICT (task_id,lease_generation) DO NOTHING RETURNING id''',(task['id'],task['user_id'],attempt['id'],context.generation,model,version,request.prompt_version,policy_version)).fetchone()
                 if row is None:raise AlreadyAnalyzed()
             context.fenced_write(begin);deadline=time.monotonic()+request.timeout_seconds
             def checkpoint():

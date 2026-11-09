@@ -15,6 +15,13 @@ const failures: Record<string, string> = {
   USER_INPUT: '视频输入不符合要求', INTERNAL: '系统内部错误', EXTERNAL_TIMEOUT: '模型服务超时',
   EXTERNAL_RATE_LIMIT: '模型服务限流', EXTERNAL_UNAVAILABLE: '模型服务暂不可用', UNKNOWN: '原因暂未确定', USER_CANCELLED: '用户主动取消',
 }
+const modelFailures: Record<string, string> = {
+  MODEL_INLINE_VIDEO_TOO_LARGE: '视频超过千问内联传输上限（原文件约 7.5 MB）。请配置私有 OSS 大文件传输，或选择更小的视频。',
+  MODEL_CLOUD_TRANSFER: '无法通过私有 OSS 传输视频。请检查存储桶设置、权限及网络连接后再试。',
+  MODEL_AUTH: '千问拒绝了 API Key 或模型权限。请检查项目 .env 后重新应用配置。',
+  MODEL_INPUT: '千问拒绝了视频或请求参数。请核对视频格式，或尝试较短的 H.264 视频。',
+  MODEL_INVALID_RESPONSE: '千问返回的结果不完整或未通过校验，请先核对模型用量。',
+}
 const refunds: Record<string, string> = { NOT_CHARGED: '尚未扣除机会', CHARGED: '已扣除一次机会', REFUNDED: '已按规则返还机会', UNLIMITED: '管理员不限处理次数' }
 function duration(value: number) {
   const n = Math.max(0, Math.ceil(value))
@@ -163,7 +170,7 @@ export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
             {task.target_seconds != null && <span>60 分钟视频处理目标：20 分钟内完成（不含排队，目标尚待实际验证）。</span>}
             {task.status === 'SUCCEEDED' && <span>处理已完成{typeof task.processing_seconds === 'number' ? ` · 实际处理 ${duration(task.processing_seconds)}` : ''}</span>}
           </div>}
-          {task.failure_category && <p>{failures[task.failure_category] || '任务失败，原因待核实'}</p>}
+          {task.failure_category && <p>{(task.failure_code && modelFailures[task.failure_code]) || failures[task.failure_category] || '任务失败，原因待核实'}</p>}
           {task.failure_code && <p>错误代码：{task.failure_code}</p>}
           {cooldown > 0 && <p className="task-wait">再次尝试约需等待 {duration(cooldown)}。等待结束后仍须由服务器确认。</p>}
           {task.status === 'FAILED' && !task.retry_allowed && cooldown <= 0 && <p className="field-help">{task.retry_count >= 20 ? '已达到累计重试上限。' : '当前状态暂不可重试，请刷新确认。'}</p>}

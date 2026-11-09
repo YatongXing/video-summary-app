@@ -1,0 +1,3 @@
+ARG VSA_API_BASE=video-summary-app-wp07a-candidate:6aed230-8990a993
+FROM ${VSA_API_BASE}
+COPY app/ /srv/app/

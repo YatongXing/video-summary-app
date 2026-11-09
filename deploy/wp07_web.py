@@ -1,6 +1,10 @@
 """Non-root static approved UI and same-origin streaming API proxy."""
 import functools,http.client,http.server,os
+from select import select
+from socket import MSG_PEEK
 from urllib.parse import urlsplit
+
+IMPORT_PATHS = {'/inputs/upload', '/inputs/url'}
 
 class Proxy(http.server.SimpleHTTPRequestHandler):
     protocol_version='HTTP/1.1'
@@ -9,14 +13,33 @@ class Proxy(http.server.SimpleHTTPRequestHandler):
     def do_HEAD(self):self.forward() if self.path.startswith('/api/') else super().do_HEAD()
     def do_POST(self):self.forward()
     def do_DELETE(self):self.forward()
+
+    def wait_for_import_response(self, upstream):
+        # The API owns the import deadline. Watch both sockets while it validates
+        # and stores the video so stopping the browser request still cancels the wait.
+        sockets = [upstream, self.connection]
+        while True:
+            readable, _, _ = select(sockets, [], [])
+            if upstream in readable:
+                return
+            if not self.connection.recv(1, MSG_PEEK):
+                raise ConnectionError('Import client disconnected')
+            # A pipelined request is readable but belongs to the next exchange.
+            sockets = [upstream]
+
     def forward(self):
         if not self.path.startswith('/api/'):self.send_error(404);return
+        path = self.path[4:]
+        is_import = self.command == 'POST' and path.split('?', 1)[0] in IMPORT_PATHS
         target=urlsplit(self.server.api_url);con=http.client.HTTPConnection(target.hostname,target.port,timeout=60)
         try:
             length=int(self.headers.get('Content-Length','0'))
             chunked=self.headers.get('Transfer-Encoding','').lower()=='chunked'
             headers={k:v for k,v in self.headers.items() if k.lower() not in ('host','connection','transfer-encoding')}
-            con.putrequest(self.command,self.path[4:],skip_accept_encoding=True)
+            con.putrequest(self.command,path,skip_accept_encoding=True)
+            if is_import:
+                # This HTTP server already handles the client's 100 Continue.
+                headers = {key: value for key, value in headers.items() if key.lower() != 'expect'}
             for k,v in headers.items():con.putheader(k,v)
             if chunked:con.putheader('Transfer-Encoding','chunked')
             con.endheaders()
@@ -47,6 +70,9 @@ class Proxy(http.server.SimpleHTTPRequestHandler):
                 chunk=self.rfile.read(min(65536,remaining))
                 if not chunk:break
                 con.send(chunk);remaining-=len(chunk)
+            if is_import:
+                if remaining:raise ConnectionError('Interrupted request body')
+                self.wait_for_import_response(con.sock)
             response=con.getresponse();self.send_response(response.status)
             for k,v in response.getheaders():
                 if k.lower() not in ('connection','transfer-encoding'):self.send_header(k,v)

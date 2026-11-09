@@ -87,7 +87,9 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
       request.setRequestHeader('X-Upload-Authorized', 'true')
       request.setRequestHeader('X-CSRF-Token', csrfToken)
       request.upload.onprogress = (event) => {
-        if (mounted.current && event.lengthComputable) setProgress(Math.min(100, Math.round(event.loaded / event.total * 100)))
+        if (mounted.current && event.lengthComputable && event.total > 0) {
+          setProgress(Math.min(100, Math.floor(event.loaded / event.total * 100)))
+        }
       }
       request.onload = () => resolve({ status: request.status, body: parseBody(request.responseText) })
       request.onerror = () => reject(new Error('Network unavailable'))
@@ -145,7 +147,7 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         setMessage('已停止本次请求。若服务器已经完成校验，可能已创建排队任务；这不等同于取消已创建的任务。')
       } else {
-        setError('连接中断，尚未确认导入结果。请联系管理员核对后再提交，避免重复导入。')
+        setError('连接中断，尚未收到导入确认。请先刷新“我的视频任务”，确认没有这条任务后再提交。')
       }
     } finally {
       running.current = false
@@ -160,7 +162,7 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
       <p className="import-description">文件不超过 2 GB、2 小时。实际容器、编码和完整性由服务器校验，导入与排队不扣处理机会。</p>
       {error && <p className="message error" role="alert">{error}</p>}
       {message && <p className="message notice" role="status">{message}</p>}
-      {result && <div className="import-success" role="status"><strong>校验通过 · Queued</strong><p>{result.filename}</p><span>时长 {Math.ceil(result.duration_seconds)} 秒。视频已进入队列，请在“我的视频任务”中查看处理进度和结果。</span>{!result.has_audio && <p>此视频没有音轨，后续将进行视觉理解；没有可用语音。</p>}</div>}
+      {result && <div className="import-success" role="status"><strong>导入成功</strong><p>{result.filename}</p><span>时长 {Math.ceil(result.duration_seconds)} 秒。视频已创建处理任务，请在“我的视频任务”中查看进度和结果。</span>{!result.has_audio && <p>此视频没有音轨，后续将进行视觉理解；没有可用语音。</p>}</div>}
       <div className="mode-switch" aria-label="视频来源">
         <button type="button" aria-pressed={source === 'local'} onClick={() => switchSource('local')} disabled={busy}>本地文件</button>
         <button type="button" aria-pressed={source === 'url'} onClick={() => switchSource('url')} disabled={busy}>HTTPS 链接</button>
@@ -168,7 +170,7 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
       <form onSubmit={(event) => void submit(event)} aria-busy={busy}>
         {source === 'local' ? <div className="field"><label htmlFor="video-file">选择视频</label><input ref={input} id="video-file" name="video" type="file" accept=".mp4,.mov" required disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setRights(false) }} aria-describedby="file-help" /><span className="field-help" id="file-help">MP4、MOV；视频 H.264 / AVC，音轨如存在须为 AAC 或 MP3。可用组合以实际校验为准。</span></div> : <div className="field"><label htmlFor="video-url">HTTPS 直达文件链接</label><input id="video-url" name="video-url" type="url" placeholder="https://example.com/video.mp4" required maxLength={8192} autoComplete="off" spellCheck={false} value={url} onChange={(event) => { setUrl(event.target.value); setRights(false) }} disabled={busy} aria-describedby="url-help" /><span className="field-help" id="url-help">仅支持合法直达视频文件，不支持平台播放页、需要登录或绕过访问限制的链接。服务器会先导入私有存储。</span></div>}
         <label className="rights-confirmation"><input type="checkbox" checked={rights} onChange={(event) => setRights(event.target.checked)} disabled={busy} required /><span>我确认拥有上传、导入及处理此视频的合法授权。</span></label>
-        {busy && <div className="transfer-status" role="status"><span>{source === 'local' ? progress === 100 ? '上传完成，正在校验视频…' : '正在上传视频…' : '正在导入并校验视频…'}</span>{source === 'local' && progress !== null ? <><progress value={progress} max={100} aria-label="文件上传进度" /><span>{progress}%</span></> : <progress aria-label="等待导入和校验完成" />}<span className="field-help">这是输入导入与校验，不表示视频已完成总结。</span></div>}
+        {busy && <div className="transfer-status" role="status"><span>{source === 'local' ? progress === 100 ? '上传完成，正在校验并保存视频…' : '正在上传视频…' : '正在导入并校验视频…'}</span>{source === 'local' && progress !== null && progress < 100 ? <><progress value={progress} max={100} aria-label="文件上传进度" /><span>{progress}%</span></> : <progress aria-label="等待导入和校验完成" />}<span className="field-help">任务创建后可在“我的视频任务”中查看处理进度。</span></div>}
         <div className="import-actions"><button type="submit" className="primary" disabled={busy}>{busy ? '正在导入…' : '导入并校验'}</button>{busy && <button type="button" className="secondary" onClick={() => active.current?.abort()}>停止本次请求</button>}</div>
       </form>
     </section>

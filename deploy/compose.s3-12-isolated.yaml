@@ -1,0 +1,9 @@
+services:
+  web:
+    networks: !override [private, web_ingress]
+networks:
+  private:
+    internal: true
+  web_ingress:
+    labels:
+      vsa.synthetic_only: "true"
