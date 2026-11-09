@@ -1,0 +1,2 @@
+# The database ledger hashes the original migration bytes.
+backend/app/migrations/*.sql -text whitespace=cr-at-eol
