@@ -8,7 +8,7 @@
 
 ## 历史 L/R 局部替代（2026-11-04）
 
-当时 WP01 L1.0 已验收，R-03/R-05 为附条件批准，R-04 字段待 WP04 冻结。下列内容保留审批时的技术选择。 [CR-001](../archive/cr/CR-001.md) · [WP01 L1.0](../archive/wp/CR-WP01_CONTRACT.md)
+当时 WP01 L1.0 已验收，R-03/R-05 为附条件批准，R-04 字段待 WP04 冻结。下列内容保留审批时的技术选择。 [CR-001](../archive/cr/CR-001.md) · [WP01 L1.0](../archive/cr/CR-WP01_CONTRACT.md)
 
 1. UUIDv4排障请求编号仅定位、非凭证；single support_requests、closed_at/close_reason/实时24h、三scope/owner例外，单任务唯一与精确ID逐次鉴权不变。
 2. tasks.support_version、两POST expected_version及再生expected_request_id原子CAS；409后GET，不自动刷新版本重投旧操作。取消专用码/crypto/key/nonce/generation receipt，接受无历史POST原响应证明。
@@ -19,7 +19,7 @@
 7. 默认Main/Coding/Testing；WP03/04/07按风险定向只读安全复核。逐包负责人验收，不自动推进。
 8. 未被替代的30天内容保留、实际删除/隔离、防复活、事件90天审计、无新内容备份/历史先核实批准及不可恢复风险保持。
 
-原P01～P12审批及WP01旧评审只保留历史；详细当前契约见[A/B](../archive/wp/CR-WP01_DATA_API_DESIGN.md)、[C](../CR-WP01_DELETION_OPERATIONS.md)、[D](../archive/wp/CR-WP01_CUTOVER_ROLLBACK.md)。不新增其他ADR文件，不删除ADR-001～004或以下原文。
+原P01～P12审批及WP01旧评审只保留历史；详细当前契约见[A/B](../archive/cr/CR-WP01_DATA_API_DESIGN.md)、[C](../CR-WP01_DELETION_OPERATIONS.md)、[D](../archive/cr/CR-WP01_CUTOVER_ROLLBACK.md)。不新增其他ADR文件，不删除ADR-001～004或以下原文。
 
 ## 原批准历史（以下原§1～4非并列当前技术契约）
 

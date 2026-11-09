@@ -454,7 +454,7 @@
           "Mode": "",
           "Propagation": "rprivate",
           "RW": false,
-          "Source": "E:\\GitHub\\video-summary-app\\backend\\app",
+          "Source": "<仓库根目录>\\backend\\app",
           "Type": "bind"
         }
       ],
@@ -497,7 +497,7 @@
           "Mode": "",
           "Propagation": "rprivate",
           "RW": false,
-          "Source": "E:\\GitHub\\video-summary-app\\backend\\app",
+          "Source": "<仓库根目录>\\backend\\app",
           "Type": "bind"
         }
       ],
@@ -540,7 +540,7 @@
           "Mode": "",
           "Propagation": "rprivate",
           "RW": false,
-          "Source": "E:\\GitHub\\video-summary-app\\backend\\app",
+          "Source": "<仓库根目录>\\backend\\app",
           "Type": "bind"
         }
       ],
@@ -645,9 +645,9 @@
       "user": "",
       "labels": {
         "com.docker.compose.project": "video-summary-app-manual",
-        "com.docker.compose.project.config_files": "E:\\GitHub\\video-summary-app\\deploy\\compose.yaml",
-        "com.docker.compose.project.environment_file": "E:\\GitHub\\video-summary-app\\deploy\\.env.example",
-        "com.docker.compose.project.working_dir": "E:\\GitHub\\video-summary-app\\deploy",
+        "com.docker.compose.project.config_files": "<仓库根目录>\\deploy\\compose.yaml",
+        "com.docker.compose.project.environment_file": "<仓库根目录>\\deploy\\.env.example",
+        "com.docker.compose.project.working_dir": "<仓库根目录>\\deploy",
         "com.docker.compose.service": "db"
       },
       "state": "exited",
@@ -681,9 +681,9 @@
       "user": "appuser",
       "labels": {
         "com.docker.compose.project": "video-summary-app-manual",
-        "com.docker.compose.project.config_files": "E:\\GitHub\\video-summary-app\\deploy\\compose.yaml",
-        "com.docker.compose.project.environment_file": "E:\\GitHub\\video-summary-app\\deploy\\.env.example",
-        "com.docker.compose.project.working_dir": "E:\\GitHub\\video-summary-app\\deploy",
+        "com.docker.compose.project.config_files": "<仓库根目录>\\deploy\\compose.yaml",
+        "com.docker.compose.project.environment_file": "<仓库根目录>\\deploy\\.env.example",
+        "com.docker.compose.project.working_dir": "<仓库根目录>\\deploy",
         "com.docker.compose.service": "worker"
       },
       "state": "exited",
@@ -727,9 +727,9 @@
       "user": "appuser",
       "labels": {
         "com.docker.compose.project": "video-summary-app-manual",
-        "com.docker.compose.project.config_files": "E:\\GitHub\\video-summary-app\\deploy\\compose.yaml",
-        "com.docker.compose.project.environment_file": "E:\\GitHub\\video-summary-app\\deploy\\.env.example",
-        "com.docker.compose.project.working_dir": "E:\\GitHub\\video-summary-app\\deploy",
+        "com.docker.compose.project.config_files": "<仓库根目录>\\deploy\\compose.yaml",
+        "com.docker.compose.project.environment_file": "<仓库根目录>\\deploy\\.env.example",
+        "com.docker.compose.project.working_dir": "<仓库根目录>\\deploy",
         "com.docker.compose.service": "api"
       },
       "state": "exited",
@@ -773,9 +773,9 @@
       "user": "rustfs",
       "labels": {
         "com.docker.compose.project": "video-summary-app-manual",
-        "com.docker.compose.project.config_files": "E:\\GitHub\\video-summary-app\\deploy\\compose.yaml",
-        "com.docker.compose.project.environment_file": "E:\\GitHub\\video-summary-app\\deploy\\.env.example",
-        "com.docker.compose.project.working_dir": "E:\\GitHub\\video-summary-app\\deploy",
+        "com.docker.compose.project.config_files": "<仓库根目录>\\deploy\\compose.yaml",
+        "com.docker.compose.project.environment_file": "<仓库根目录>\\deploy\\.env.example",
+        "com.docker.compose.project.working_dir": "<仓库根目录>\\deploy",
         "com.docker.compose.service": "object-store"
       },
       "state": "exited",

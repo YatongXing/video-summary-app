@@ -1,0 +1,16 @@
+services:
+  worker:
+    image: ${VSA_S311_WORKER_IMAGE:?set validated Worker image}
+    environment:
+      WORKER_PROCESSOR_MODE: ${VSA_S311_WORKER_MODE:-offline}
+      MODEL_CALLS_ENABLED: ${VSA_S311_MODEL_CALLS:-false}
+      MODEL_ADAPTER_TIMEOUT_SECONDS: ${VSA_S311_TIMEOUT_SECONDS:-120}
+      DASHSCOPE_API_KEY: ${VSA_S311_KEY:-}
+      DASHSCOPE_BASE_URL: ${VSA_S311_BASE_URL:-https://maas.qianwenaiapi.com/compatible-mode/v1}
+      QWEN_MODEL: ${VSA_S311_MODEL:-qwen3.8-omni-flash}
+      QWEN_OSS_REGION: ${VSA_S311_OSS_REGION:-}
+      QWEN_OSS_BUCKET: ${VSA_S311_OSS_BUCKET:-}
+      QWEN_OSS_ACCESS_KEY_ID: ${VSA_S311_OSS_ACCESS_KEY_ID:-}
+      QWEN_OSS_ACCESS_KEY_SECRET: ${VSA_S311_OSS_ACCESS_KEY_SECRET:-}
+  web:
+    image: ${VSA_S311_WEB_IMAGE:?set validated Web image}

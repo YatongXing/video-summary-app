@@ -58,4 +58,4 @@
 | CR-AC-23 | 列表权限 | 服务端管理员认证；普通用户不可读管理员列表或他人请求信息，知道UUID不产生权限。 |
 | CR-AC-24 | 备份功能移除后的删除 | 仍满足认证/归属、幂等、并发、防迟到发布、受控重试、一致性、诊断、隔离及授权终止。 |
 
-现行部署准入见 [WP07-A 执行清单](CR-WP07A_FORMAL_RUNBOOK.md)。历史 M3、隔离恢复及角色计划见 [WP01 切换回退设计](archive/wp/CR-WP01_CUTOVER_ROLLBACK.md)。
+现行部署准入见 [WP07-A 执行清单](CR-WP07A_FORMAL_RUNBOOK.md)。历史 M3、隔离恢复及角色计划见 [WP01 切换回退设计](archive/cr/CR-WP01_CUTOVER_ROLLBACK.md)。

@@ -1,11 +1,25 @@
 # Video Summary App
 
-Video Summary App 在 Windows 上导入本地视频或经安全校验的 HTTPS 直达视频，处理任务并提供双语摘要、JSON 导出和视频播放。当前交付使用离线模型替身。
+Windows 本机视频摘要应用。支持本地文件和经安全校验的 HTTPS 直达视频，提供中英文摘要、JSON 导出和视频播放。
 
-截至 2026-11-08，WP07-A 已通过正式本机部署与合成业务验收。vsa-local 保持 OPEN，Web 仅监听 127.0.0.1:58080，真实 Qwen 仍关闭。现行镜像、巡检和日常维护见 [WP07-A 部署移交](docs/WP07A_DEPLOYMENT_HANDOFF.md)。
+## 从源码构建与隔离验证
 
-- [现行产品契约](docs/CR-002.md)：USER 和 ADMIN 均可从个人入口查看自己的内容。管理员后台仅显示白名单元数据，按 Task ID 搜索。
-- [正式本地部署方案](docs/CR-WP07A_LOCAL_DEPLOYMENT_PLAN.md)和[执行清单](docs/CR-WP07A_FORMAL_RUNBOOK.md)：使用新的数据库、私有对象存储和独立删除控制卷。创建、发布到 localhost 和开门分阶段审批。
-- [阶段状态与待办](docs/IMPLEMENTATION_PLAN.md#当前交付状态)和[文档索引](docs/README.md)：区分当前规范、验证证据、历史归档及后续工作。
+在 Windows 安装 Docker Desktop（Linux 容器）、Python 3.11、Node.js 22.12+（含 npm）及 Chrome 或 Edge。从仓库根目录运行：
 
-旧 manual 和 WP06 容器、全部 13 个历史卷均已按批次回收。当时的历史资源清理盘点为 0 个容器、0 个卷，旧 manual 专用网络及既有镜像保留。S3-11 真实 Qwen 接入及计费、S3-12 部署完善仍待各自授权。 [处置记录](docs/CR-WP07A_FORMAL_RUNBOOK.md#2026-11-07-剩余六卷最终处置)
+~~~powershell
+python backend/tools/verify_source_build.py
+~~~
+
+首次构建从公开镜像仓库和依赖源获取所需组件。脚本通过前端锁文件在临时目录生成 Web 产物，并重新构建 API、Worker 和 Web 镜像。独立验证无需本机交付包、已有 `dist/` 或 `.env`。浏览器安装在其他位置时，可通过 `UI_TEST_BROWSER` 指定可执行文件。
+
+脚本分别启动内联媒体与模拟 OSS 两个临时项目。每个项目有独立数据库、网络和卷，Web 仅绑定本机临时端口。测试检查 001～011 迁移、维护门禁、跨用户访问隔离、合成视频的中英文摘要、JSON 导出、播放、取消和删除。验证使用模拟千问与 OSS，并回收测试容器、网络及卷。源码镜像保留为唯一的 `vsa-source-*` 本地标签，便于复核。
+
+仅构建前端时，可在 `frontend/` 运行 `npm ci` 和 `npm run build`。如需保留本机已验收的 `dist/`，请在独立检出中运行。模型配置模板见 [.env.example](.env.example)。
+
+## 已有本机实例
+
+已部署的 S3-12 实例使用 [127.0.0.1:58080](http://127.0.0.1:58080/)，支持真实千问和私有 OSS。正式更新需要本机已有实例及单独保管的 S3-12 交付包。
+
+- [正式更新与运维](deploy/README.md)
+- [千问与 OSS 操作指南](docs/S3_11_USER_GUIDE.md)
+- [产品要求、架构与历史资料](docs/README.md)

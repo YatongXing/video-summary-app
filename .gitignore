@@ -1,6 +1,8 @@
 **/.env
 **/.env.*
 !**/.env.example
+**/compose.env
+**/wp07.env
 **/.venv/
 **/__pycache__/
 **/.pytest_cache/
@@ -8,3 +10,5 @@
 **/dist/
 **/.vite/
 *.py[cod]
+/release/
+/docs/archive/work-private/

@@ -9,7 +9,7 @@
   },
   "manual_environment_policy": "Preserve existing tasks/accounts/data; only verified API restart and read-only browser checks; no seed/upload/delete",
   "manual_api_restart": {
-    "state": "C:\\Users\\邢亚桐\\AppData\\Local\\Temp\\video-summary-wp06-5q2vqys5\\state.json",
+    "state": "<验收临时目录>\\state.json",
     "url": "http://127.0.0.1:50658",
     "verified_id": "vsa-wp06-172ff1a984",
     "restarted_only": "vsa-wp06-172ff1a984-api",

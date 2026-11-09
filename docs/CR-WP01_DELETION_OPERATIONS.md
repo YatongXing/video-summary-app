@@ -3,8 +3,8 @@
 > 删除、清理、审计和部署者维护规则继续有效。下文涉及排障授权的处理仅用于历史记录关闭、审计和清退。现行产品权限见 [CR-002](CR-002.md)，正式部署身份和门禁见 [WP07-A](CR-WP07A_LOCAL_DEPLOYMENT_PLAN.md)。
 
 **版本：** L1.0 · **日期：** 2026-11-04
-**状态：** R-03/R-04批准规则保留；WP03已验收、WP04已单独授权实施，具体字段/接口冻结见§7，运行证据见[WP04报告](archive/wp/CR-WP04_VALIDATION_REPORT.md)。本文件替代旧claim/多状态/ops回执方案；未自动认定WP04验收或授权后包。
-**关联：** [共享契约](archive/wp/CR-WP01_CONTRACT.md)、[数据/API](archive/wp/CR-WP01_DATA_API_DESIGN.md)、[切换](archive/wp/CR-WP01_CUTOVER_ROLLBACK.md)。
+**状态：** R-03/R-04批准规则保留；WP03已验收、WP04已单独授权实施，具体字段/接口冻结见§7，运行证据见[WP04报告](archive/cr/CR-WP04_VALIDATION_REPORT.md)。本文件替代旧claim/多状态/ops回执方案；未自动认定WP04验收或授权后包。
+**关联：** [共享契约](archive/cr/CR-WP01_CONTRACT.md)、[数据/API](archive/cr/CR-WP01_DATA_API_DESIGN.md)、[切换](archive/cr/CR-WP01_CUTOVER_ROLLBACK.md)。
 
 ## 1. 删除接受与内容边界
 

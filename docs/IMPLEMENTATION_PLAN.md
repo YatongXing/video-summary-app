@@ -1,6 +1,6 @@
 # Video Summary App — Step 3 实施计划
 
-截至 2026-11-07，S3-01～10 为旧本地交付。CR-002 及新版 WP06 已验收，WP07-A 隔离验证完成，正式部署尚未执行。现行产品与验收见 [CR-002](CR-002.md) 和 [AC](AC.md)。
+S3-01～10、CR-002 和 WP07-A 资料保留原阶段的审批与验证历史。正式实例已完成 S3-12 升级和长视频人工验收。现行产品与验收见 [CR-002](CR-002.md) 和 [AC](AC.md)。
 
 ## 工作目标与边界
 
@@ -11,14 +11,14 @@
 | 阶段 | 已完成或待决事项 | 证据 |
 | --- | --- | --- |
 | S3-01～10 | 原本地离线交付完成。非模型回归和短时容量仅反映旧环境。 | [S3-10 基线](archive/s3/REGRESSION_BASELINE.md) |
-| WP01 | L1.0 设计已正式验收。后续 CR-002 替代排障部分。 | [WP01 评审](archive/wp/CR-WP01_REVIEW_REPORT.md) |
-| WP02 | 010 结构与隔离验证已交付。负责人随后明确授权 WP03，现有记录未单独确认 WP02 验收。 | [WP02 验证](archive/wp/CR-WP02_VALIDATION_REPORT.md) · [交接记录](archive/cr/CR-001_IMPLEMENTATION_PLAN.md#8-wp02启动与交接记录2026-11-04) |
-| WP03 | 当时的排障 API 与权限测试已实现并验收。产品入口随 CR-002 退役。 | [WP03 验证与安全](archive/wp/CR-WP03_VALIDATION_REPORT.md) |
-| WP04 | 删除、清理、011 及受控维护已实现并验收。CR-002 保留这些保障。 | [WP04 验证与安全](archive/wp/CR-WP04_VALIDATION_REPORT.md) |
-| WP05 | 当时的排障前端已实现并验收，相关页面和交互随 CR-002 退役。 | [WP05 验证](archive/wp/CR-WP05_VALIDATION_REPORT.md) |
-| WP06 | 原 CR-001 集成结果保留。CR-002 及新版 WP06 的最终页面已获负责人验收，含 Task ID 搜索和显示调整。原人工实例已回收。 | [旧 WP06](archive/wp/CR-WP06_VALIDATION_REPORT.md) · [新版 WP06](archive/wp/CR-002_WP06_VALIDATION_REPORT.md) · [最终调整](archive/cr/CR-002_ACCEPTANCE_ADJUSTMENTS.md) |
-| WP07 | 准备审核完成，负责人选择 WP07-A 全新本机部署。旧实例迁移、旧授权终止和凭据失权方案不适用于路径 A。 | [准备审核](archive/wp/CR-WP07_PREPARATION_REVIEW.md) · [路径 A](CR-WP07A_LOCAL_DEPLOYMENT_PLAN.md) |
-| WP07-A | A、B、C1 与 C2 均已验收。vsa-local 保持 OPEN，Web 仅发布至 127.0.0.1:58080。正式巡检使用 Windows Application 日志和当前用户桌面通知，真实 Qwen 关闭。 | [部署移交](WP07A_DEPLOYMENT_HANDOFF.md) · [历史实施](CR-WP07A_IMPLEMENTATION_REPORT.md) · [隔离测试](CR-WP07A_TESTING_REPORT.md) · [安全](CR-WP07A_SECURITY_REVIEW.md) · [执行清单](CR-WP07A_FORMAL_RUNBOOK.md) |
+| WP01 | L1.0 设计已正式验收。后续 CR-002 替代排障部分。 | [WP01 评审](archive/cr/CR-WP01_REVIEW_REPORT.md) |
+| WP02 | 010 结构与隔离验证已交付。负责人随后明确授权 WP03，现有记录未单独确认 WP02 验收。 | [WP02 验证](archive/cr/CR-WP02_VALIDATION_REPORT.md) · [交接记录](archive/cr/CR-001_IMPLEMENTATION_PLAN.md#8-wp02启动与交接记录2026-11-04) |
+| WP03 | 当时的排障 API 与权限测试已实现并验收。产品入口随 CR-002 退役。 | [WP03 验证与安全](archive/cr/CR-WP03_VALIDATION_REPORT.md) |
+| WP04 | 删除、清理、011 及受控维护已实现并验收。CR-002 保留这些保障。 | [WP04 验证与安全](archive/cr/CR-WP04_VALIDATION_REPORT.md) |
+| WP05 | 当时的排障前端已实现并验收，相关页面和交互随 CR-002 退役。 | [WP05 验证](archive/cr/CR-WP05_VALIDATION_REPORT.md) |
+| WP06 | 原 CR-001 集成结果保留。CR-002 及新版 WP06 的最终页面已获负责人验收，含 Task ID 搜索和显示调整。原人工实例已回收。 | [旧 WP06](archive/cr/CR-WP06_VALIDATION_REPORT.md) · [新版 WP06](archive/cr/CR-002_WP06_VALIDATION_REPORT.md) · [最终调整](archive/cr/CR-002_ACCEPTANCE_ADJUSTMENTS.md) |
+| WP07 | 准备审核完成，负责人选择 WP07-A 全新本机部署。旧实例迁移、旧授权终止和凭据失权方案不适用于路径 A。 | [准备审核](archive/cr/CR-WP07_PREPARATION_REVIEW.md) · [路径 A](CR-WP07A_LOCAL_DEPLOYMENT_PLAN.md) |
+| WP07-A | A、B、C1 与 C2 均已验收。当时 vsa-local 开门，Web 发布至 127.0.0.1:58080。验收时巡检使用 Windows Application 日志和桌面通知，模型为离线模式。巡检后续由负责人停用。 | [部署移交](WP07A_DEPLOYMENT_HANDOFF.md) · [历史实施](CR-WP07A_IMPLEMENTATION_REPORT.md) · [隔离测试](CR-WP07A_TESTING_REPORT.md) · [安全](CR-WP07A_SECURITY_REVIEW.md) · [执行清单](CR-WP07A_FORMAL_RUNBOOK.md) |
 
 历史处置已移除旧 manual 4 个容器、WP06 5 个容器及其专用网络和临时数据，以及全部 13 个数据卷。WP06 留有停止状态文件，旧 manual 专用网络和镜像保留。最后一次处置盘点为 0 个容器、0 个卷。剩余六卷按负责人明确指示直接删除，原审计和删除作业状态没有补记为验证通过，外部副本盘点仍属独立事项。 [处置记录](CR-WP07A_FORMAL_RUNBOOK.md#2026-11-07-剩余六卷最终处置)
 
@@ -40,10 +40,10 @@ S3-01～10行保留历史工作内容；旧目的授权、人工页面和备份�
 | S3-08 | 双语摘要、时间戳、Schema 1.0 校验、JSON 导出、用户历史/进度与管理员元数据页面。 | S3-03/05/07 | 前后端可分文件派发；主 Agent 集成 | AC-11/13～16；无效 JSON 不可下载、失败可见、成功仅更新界面。 |
 | S3-09 | 删除栅栏、原片及派生/评测资产关联清理、30/90 天保留、告警及管理员手动再推进、恢复防复活。 | S3-02/05/06/08 | 完整三角色工作流 | AC-17～20；部分失败、迟到回调、备份恢复及撤销后的访问拒绝。 |
 | S3-10 | 非模型模块自动回归、端到端故障注入与本机容量基线。 | S3-03～09 | 测试 Agent 独立执行；主 Agent 验收 | [E2E_TEST_PLAN](E2E_TEST_PLAN.md)覆盖证据；记录 Windows 环境、≤5 同时上传与 10–30 人使用的测量口径，不虚报容量。 |
-| S3-11 | 待独立授权。验证真实 Qwen、受控媒体回连或其他合法输入路径、2 小时/2 GB、真实用量与费用、失败和时长。以 15 个授权视频建立人工质量基线。 | WP07-A 正式本机部署验收，阶段与逐批计费及外发批准 | 负责人批准批次并组织评测，独立核对结果 | 请求 ID、用量、账单、错误、时长、JSON、时间戳及报告。 |
-| S3-12 | 待独立授权。完善正式部署、升级和运维交接，交付无用户内容的软件重建资料及不可恢复风险。核实仍适用的外部历史副本及退役边界。 | WP07-A、S3-11 完成或负责人接受其限制，另批实施和适用副本处置 | 负责人审批，独立验证 | 无新含内容备份，部署及故障发现、删除和副本处置证据。 |
+| S3-11 | 已接入真实千问。内联和私有 OSS 两条路径均有本机成功样本，模型请求、用量、失败分类和临时对象清理可核对。 | WP07-A | 负责人在本机验收 | [模型使用指南](S3_11_USER_GUIDE.md) |
+| S3-12 | 隔离重建、旧镜像升级和正式切换完成。负责人确认长视频人工验收通过，本机账本核实 OSS 路径成功并已清理临时对象。 | S3-11 | 隔离验证和负责人验收 | [本机运维](../deploy/README.md)，交付包 `release/s3-12-local` 内的校验清单和验证记录 |
 
-后续顺序为 WP07-A 正式创建与开放验收 → S3-11 单独启动与逐批审批 → S3-12 单独启动。WP07-A 的最低巡检和删除故障发现是开放门槛，S3-12 完善运营交接。
+S3-12 交付与旧文件收尾已完成。正式更新统一走 S3-12 交付包。C 盘旧工作材料已校验并归档至 `docs/archive/work-private/s3-12-2026-11-09`，迁移与恢复记录见 [S3-12 清理报告](archive/s3/S3_12_CLEANUP_REPORT.md)，旧 Records 的重复配置和原始证据已清理，验收摘要见 [WP07-A 部署移交](WP07A_DEPLOYMENT_HANDOFF.md#证据与归档)。业务数据备份和扩大访问范围保持独立处理。长视频样本验收覆盖约 685 MB、6 分 54 秒的 OSS 路径，2 GB/2 小时边界、并发和大样本质量分别验证。
 
 ## Agent 派发与交接规则
 
@@ -66,11 +66,11 @@ WP03认证授权/隔离、WP04删除/并发、WP07正式切换/恢复/部署定�
 
 ## 开始与停止门槛
 
-1. **正式部署维护**。现有 vsa-local 按[部署移交](WP07A_DEPLOYMENT_HANDOFF.md)运行。未来创建、发布、维护开门或扩大开放范围继续按[执行清单](CR-WP07A_FORMAL_RUNBOOK.md)分阶段授权。
-2. **模型计费门槛：** S3-11 每批先给出目的、输入数据、调用/重试量、费用估算、失败收费风险、外发字段与硬预算；产品负责人明确批准该批后才能调用。已有 Key 不代表批准。
-3. **真实素材外发门槛：** 受控媒体访问 URL 的公网边界、撤销/过期和访问日志通过验证，产品负责人批准真实素材范围。先用非敏感或官方公开样本；不直接转发用户原始 URL。
-4. **发布门槛：** 关键 AC、删除和跨用户隔离测试通过，管理员账户安全交付；P90、质量和容量若未达标，报告实际限制，不以架构批准替代证据。
-5. **Git：** 依 [Git 策略](GIT_STRATEGY.md)和具体授权处理工作区。文档整合只读检查差异，提交和推送另行授权。
+1. **正式部署维护**。现有实例按 [S3-12 本机运维](../deploy/README.md)更新。首次创建和受控维护规则见 [WP07-A Runbook](CR-WP07A_FORMAL_RUNBOOK.md)。
+2. **模型计费与外发**。正式网页由负责人选择有权处理的真实素材并承担费用。开发回归使用无外网环境和合成素材。模型与 OSS 凭据只交给 Worker，媒体验证和签名链接规则见[架构](ARCHITECTURE.md)。
+
+3. **发布门槛：** 关键 AC、删除和跨用户隔离测试通过，管理员账户安全交付；P90、质量和容量若未达标，报告实际限制，不以架构批准替代证据。
+4. **Git：** 依 [Git 策略](GIT_STRATEGY.md)和具体授权处理工作区。文档整合只读检查差异，提交和推送另行授权。
 
 ## 历史工作包和交接资料
 

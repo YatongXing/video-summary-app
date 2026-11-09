@@ -55,7 +55,7 @@
         "status": "running"
       }
     ],
-    "state_path": "C:\\Users\\邢亚桐\\AppData\\Local\\Temp\\video-summary-wp06-uctb0pyc\\state.json",
+    "state_path": "<验收临时目录>\\state.json",
     "url": "http://127.0.0.1:57233",
     "samples": [
       "short.mp4",
@@ -190,13 +190,13 @@
     "Browser account synthetic quotas reset before final browser run, quota proof comes from separate core/HTTP tests"
   ],
   "manual": {
-    "state": "C:\\Users\\邢亚桐\\AppData\\Local\\Temp\\video-summary-wp06-5q2vqys5\\state.json",
+    "state": "<验收临时目录>\\state.json",
     "id": "vsa-wp06-172ff1a984",
     "url": "http://127.0.0.1:50658",
     "api_url": "http://127.0.0.1:50657",
     "samples": {
-      "short": "C:\\Users\\C0FD~1\\AppData\\Local\\Temp\\video-summary-wp06-5q2vqys5\\short.mp4",
-      "long": "C:\\Users\\C0FD~1\\AppData\\Local\\Temp\\video-summary-wp06-5q2vqys5\\long.mp4"
+      "short": "<验收临时目录>\\short.mp4",
+      "long": "<验收临时目录>\\long.mp4"
     },
     "accounts": [
       {
@@ -245,7 +245,7 @@
       "vsa-wp06-172ff1a984-control"
     ],
     "network": "vsa-wp06-172ff1a984-net",
-    "support_email": "3160499267@qq.com",
+    "support_email": "<本机反馈地址>",
     "model_calls_enabled": false,
     "note": "Fresh manual environment prepared after automated resource cleanup; synthetic task upload smoke only, manual acceptance pending"
   },
