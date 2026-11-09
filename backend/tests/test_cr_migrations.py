@@ -23,7 +23,8 @@ OLD_HASHES = [
 def test_old_assets_frozen():
     files=sorted(MIGRATIONS.glob("00*.sql"))
     assert [sha256(x.read_bytes()).hexdigest() for x in files] == OLD_HASHES
-    assert [p.name for p in MIGRATIONS.glob("01*.sql")] == ["010_cr_support_expand.sql"]
+    # This suite verifies the 010 upgrade. The cleanup suite verifies 011.
+    assert [p.name for p in MIGRATIONS.glob("010_*.sql")] == ["010_cr_support_expand.sql"]
 
 
 def old_directory(tmp_path):

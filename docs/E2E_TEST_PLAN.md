@@ -1,8 +1,8 @@
 # 端到端测试计划 — Video Summary App
 
-**阶段**：现行产品端到端规格。专项以 [CR-002 测试](CR-002_TEST_PLAN.md) 和 [WP07-A 测试](CR-WP07A_TEST_SPEC.md) 为准。
+覆盖现行产品、内容权限、删除和本机部署回归。
 
-**关联：** [AC](AC.md) · [质量评估](QUALITY_EVALUATION.md)
+**关联：** [AC](AC.md) · [质量评估](testing/QUALITY_EVALUATION.md)
 
 | 场景 | 操作 | 预期结果 |
 | --- | --- | --- |
@@ -31,11 +31,9 @@
 
 ## 执行前待确定与专项规格
 
-旧 CR-AC 和迁移场景归档于 [CR-001 测试规格](archive/cr/CR-001_TEST_PLAN.md)。现行状态及实测证据见[文档索引](README.md)。
-
 已批准的容器/编码组合须先完成兼容性验证；JSON 自动修复次数是可配置内部参数。实施阶段须为除外部模型推理外的模块编写可重复执行的单元/集成回归测试；外部模型用测试替身，付费调用不属于自动回归测试。
 
-| 非模型模块 | 当前目标回归规格（历史实现证据另见S3-10报告） |
+| 非模型模块 | 回归规格 |
 | --- | --- |
 | 身份、会话和内容权限 | 两角色 owner 内容、跨用户拒绝、元数据白名单及搜索、登录和查询限速、旧入口拒绝、续流门禁。 |
 | 本地与 URL 导入 | 两种输入同一 2 小时/2 GB 与编码白名单；损坏文件、伪装 MIME、超限流、回环/内网地址、重定向和 URL 敏感参数不进日志。 |
@@ -46,10 +44,56 @@
 | 删除与历史副本 | 关联资产、栅栏/Worker竞争、幂等、限频退避/可发现信号/危险停止/受控再推进、最小审计；无新内容备份，历史能力和获准恢复防复活。 |
 | 保留与日志 | 任务和普通任务日志 30 天到期、删除审计按各事件时间 90 天到期，跨时区显示不改变 UTC 期限。 |
 
-此计划是目标验收/回归规格，不是本轮执行结果或覆盖率声明；旧测试按专项清单保留/更新/条件移除，新测试在获准实现包编写。
+## 内容权限专项回归
 
-## 删除、恢复和正式部署的专项验收
+| ID | 新验收断言 | 层次 |
+|---|---|---|
+| C2-01 | USER、ADMIN上传→队列→Worker→双语摘要/JSON/本人视频200与Range206及真实seek；任何他人含ADMIN均404 | ASGI/真实HTTP/真实浏览器 |
+| C2-02 | 旧有效三scope请求、purpose、consent、UUID与所有退役端点不提供正文；未登录401、错误角色403、mutation无CSRF403、合法认证410 | 真实PG/HTTP；内部helper |
+| C2-03 | 会话撤销/停用/角色变化/任务删除/30天边界；最终摘要复核与video存储I/O前后、分块继续检查；配置journal identity运行中丢失/损坏/失配及目录丢失拒读503，读取期间失信不发送后续正文 | 真实PG与故障接缝/TCP |
+| C2-04 | admin元数据所有返回层严格白名单，含本人无内容；排除正文、章节、key、URL、secret、原模型输入输出/异常 | ASGI/真实HTTP/浏览器 |
+| C2-05 | task_id完整UUID精确优先与大小写；任意文本字面包含（含单字符/非hex/Unicode/%/_/引号/长串），无匹配[]，无最短/字符集限制；清空自动恢复默认且分页归零/迟到响应不能覆盖；后台全局搜索跨页；稳定排序、limit1..100、offset<=10000；无UserID筛选；USER403 | PG/API/浏览器 |
+| C2-06 | 查询2秒预算与超时503、每actor60/source300每60秒独立限速/429；错误不回显输入或SQL；搜索不改变登录限速 | PG/定向故障 |
+| C2-07 | USER/ADMIN五态任务列表/失败信息均在任务名称下显示并复制真实Task ID，创建回执不重复显示编号/复制（仍验证服务器ID），展开结果卡片仅名称下保留一组ID和复制按钮；重试刷新不换ID、切账号/迟到回调不泄旧ID；任务前失败无假ID | Mock/真实浏览器 |
+| C2-08 | SUPPORT_EMAIL仅公开合法邮箱；缺失/非法不显示，无源码真实邮箱；桌面和移动端底部不遮挡；mailto无token/正文附带 | 配置/API/浏览器 |
+| C2-09 | 排障UI及专属状态退役、ADMIN两场景切换，metadata全页不挂个人导入/任务/ResultPanel，切页停止个人视频；正常owner页面和原卸载/异步/媒体/download清理保持 | Mock/真实浏览器 |
+| C2-10 | 001..011原SHA不变、空库/旧合成库/已有011兼容、历史support/consent清退/关闭及恢复撤销仍生效 | 独立PG/角色/恢复 |
+| C2-11 | 原队列/FIFO/N/用户限制、配额扣退、自动/手动重试、取消、五态/错误日志/审计不回归 | 完整非模型后端 |
+| C2-12 | 删除journal/栅栏/代次/父死子活/FD/inode/SH-EX/N>=2删A保B/四态版本/资产归属/BACKUP审批/30天90天保持 | PG/真实Linux/S3 |
+| C2-13 | PG/S3/Worker故障和同卷重启、health/status/retry/持久告警/合法维护成功与精确提交失败回滚 | 真实HTTP/存储/受控故障 |
 
-- E2E-19需真实Linux Docker/FFmpeg父终止子存活、SH/EX/稳定inode、N>=2并发生产及删A不伤B；四态/单job_version/全局清理1、持久重试、受控三入口与90天事件审计；在线完成不等整体完成。
-- WP07-A 在全新空库校验并应用 001～011，独立初始化、维护、运行身份。门禁持久化，控制失信时拒绝业务。获准恢复须隔离重放，终止旧会话和授权，账户状态不明时保持关闭。
-- WP07-A 正式开放前确认实际巡检和通知职责。S3-12 完善运营交接。性能与质量目标以实测为准。
+## 本机部署专项回归
+
+| ID | 必须证明的行为 | 证据层 |
+|---|---|---|
+| A01 | 新空PG17完整001～011与原SHA；非新空库拒绝误初始化；无旧授权/旧服务失权动作标不适用 | 新专用PG/真实bootstrap |
+| A02 | init、NOSUPER owner maint、非owner runtime三身份；API/Worker无init/maint秘密；DDL/CREATE/SET ROLE/表owner负例、维护重连 | catalog/真实连接负例/容器白名单env keys |
+| A03 | runtime consent最小清退和support仅关闭清退；INSERT/授权读取拒绝，真实正常任务删除/已有job关闭不被ACL破坏 | PG/HTTP/实际清理 |
+| A04 | 新镜像/模板required=true，缺失/false启动预检拒绝；旧WP06/legacy未设flag兼容不影响既有测试 | 配置/独立legacy与strict实例 |
+| A05 | 初始CLOSED；信任OPEN才允许业务；缺失/损坏/身份失配/未知state/符号链接fail closed；读取不重建缺失控制 | PG+真实控制卷/负例 |
+| A06 | close/open只维护身份、真实DB owner验证，runtime/ADMIN无HTTP/CLI捷径；状态原子持久化，容器/主机代理重启后CLOSED保持 | 真实CLI/重启/HTTP |
+| A07 | CLOSED时API业务读写、auth/任务/内容/上传/导出及ready拒绝，live仍可诊断；请求入口后闭门不继续发布/读写 | HTTP与受控I/O接缝 |
+| A08 | 视频首响应及HEAD/get/read前后/分块中close停止后续正文，重OPEN可正常Range/seek | 真实HTTP/TCP/Chrome |
+| A09 | Worker在CLOSED时不启动重放/领取/心跳写/发布/新转码上传/物理清理；长处理期间closed阻后续I/O且不伪成功退款；OPEN恢复队列 | 双Worker/真实I/O+checkpoint/PG状态 |
+| A10 | USER/ADMIN各正常本人上传→处理→双语摘要JSON、视频/seek；跨用户及旧请求/旧API拒绝；metadata明确字段白名单无内容 | 真实PG/私有RustFS/HTTP/Chrome |
+| A11 | 发布候选的前端源码与产物有对应指纹；Task ID只名称下，任意字面搜索清空默认，反馈配置、切账号和媒体卸载保持 | SHA/复用浏览器 |
+| A12 | 全局N/普通用户约束、FIFO、配额扣退、自动/人工重试/取消/原五态/错误与日志不回归 | 必要完整非模型/真实Worker |
+| A13 | 非root UID10001实际运行；staging/work/control卷可写且Linux锁/稳定inode/FD继承/父死子活/N>=2删A保B仍成立 | 新镜像/真实Linux/FFmpeg |
+| A14 | 删除意图/栅栏/代次、实际SQL对象工作目录清理、四态版本/退避、journal重放与30天90天/BACKUP不误删 | PG/真实Linux/S3/受控维护 |
+| A15 | Docker停止/重启后任务与卷持久；PG/S3/Worker故障恢复、CLOSED不会因重启/依赖失败自行OPEN | 隔离实例实停实启 |
+| A16 | 真实运行monitor覆盖API/Worker/DB/S3/cleanup/进度/持续故障，file receiver确实接收故障与恢复，去重不吞持续故障 | 隐藏临时host观察器/文件事件+故障注入 |
+| A17 | 隔离验证使用合成账号与本地文件接收器；正式通知渠道和责任人经确认后启用 | 配置/进程/报告边界 |
+| A18 | 所有新资源先验prefix/标签/无冲突；其他实例的容器和卷保持原状；本次隔离资源按标签回收 | before/afterDocker元数据/产物SHA |
+
+## 执行和记录
+
+在独立源码副本中运行以下检查。
+
+| 检查 | 入口 |
+| --- | --- |
+| 后端回归 | 在 `backend/` 安装 `requirements-dev.txt` 并运行 `python -m pytest -q`。OSS 测试依赖与 [Worker 镜像](../deploy/Dockerfile.source-worker)固定版本一致。按场景配置专用 PostgreSQL、私有测试对象存储和 Linux Docker。缺少专用测试环境时，对应场景跳过。 |
+| 前端构建和界面冒烟 | 在 `frontend/` 运行 `npm ci`，随后运行 `npm run test:ui`。该命令包含 TypeScript 检查和生产构建。 |
+| 源码构建与隔离浏览器验证 | 在仓库根目录运行 `python backend/tools/verify_source_build.py`。需要 Node.js、Python 3.11、Chrome 或 Edge 与 Docker Desktop Linux 容器。验证新建的 API、Worker、Web 和专用 Compose 环境，分别覆盖内联与模拟 OSS 路径。 |
+| 部署门禁与浏览器 | 在专用验证副本构建 `frontend/dist/` 后，从仓库根目录运行 `python backend/tools/wp07a_compose_verify.py run`。该入口验证重复初始化拒绝、实际网络与身份、CLOSED 重启保持及维护开门，并运行合成浏览器用例。其余专项按上表所列的夹具及故障注入层次执行。 |
+
+隔离验证仅使用合成账号、媒体、对象和控制状态。按场景记录通过、失败、未执行及证据层级，区分浏览器替身、真实数据库、真实 Linux I/O 和离线模型。故障注入仅作用于本次核实归属的测试资源，完成后核对资源回收。真实模型质量和生产指标按[质量评估](testing/QUALITY_EVALUATION.md)和 PRD 单独测量。

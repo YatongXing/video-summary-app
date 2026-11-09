@@ -31,4 +31,4 @@ QWEN_OSS_ACCESS_KEY_SECRET=
 
 大文件会完整上传到专用 OSS 桶。应用只向千问发送约 15 分钟有效的 HTTPS 签名读取链接。链接有效期间，持有者可以读取该临时对象。OSS 传输和千问模型可能分别产生费用。删除临时对象不会撤回千问已经读取的数据。[OSS 签名读取链接](https://help.aliyun.com/zh/oss/user-guide/how-to-obtain-the-url-of-a-single-object-or-the-urls-of-multiple-objects/) · [OSS 计费](https://help.aliyun.com/zh/oss/billing-overview/)
 
-更新入口和就绪检查见[本机运维](../deploy/README.md)。
+更新入口和就绪检查见[本机运维](../../deploy/README.md)。

@@ -10,7 +10,10 @@ from test_results import identity,claimed,publish,authenticated,client
 
 @pytest.fixture
 def wp04_db(monkeypatch,tmp_path):
-    p=conninfo_to_dict(os.environ["TEST_DATABASE_URL"])
+    url=os.getenv("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Explicit isolated WP04 TEST_DATABASE_URL required")
+    p=conninfo_to_dict(url)
     assert p["dbname"]=="wp04_test" and p["host"]=="127.0.0.1"
     if os.environ.get('WP07A_ISOLATED_INSTANCE'):
         assert os.environ['WP07A_ISOLATED_INSTANCE'].startswith('vsa-wp07a-test-')

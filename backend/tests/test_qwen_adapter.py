@@ -69,6 +69,7 @@ class MockTransport:
             assert media.startswith(f'https://{CLOUD_HOST}/vsa-qwen/')
             assert media.endswith('?X-Oss-Signature=fixture')
         else:
+            assert TASK_ID.encode() not in body
             decoded = base64.b64decode(media.removeprefix('data:;base64,'), validate=True)
             if digest:
                 assert hashlib.sha256(decoded).hexdigest() == digest
@@ -173,6 +174,7 @@ class QwenTests(unittest.TestCase):
         class StreamFailure(MockTransport):
             def request(self, method, path, body, headers):
                 self.requests += 1
+                assert TASK_ID.encode() not in body
                 self.payload = json.loads(body)
                 assert self.payload['messages'][0]['content'][0]['video_url']['url'] == PRIVATE_URL
 

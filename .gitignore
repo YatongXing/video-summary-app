@@ -11,4 +11,4 @@
 **/.vite/
 *.py[cod]
 /release/
-/docs/archive/work-private/
+/docs/archive/

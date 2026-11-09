@@ -21,5 +21,9 @@ python backend/tools/verify_source_build.py
 已部署的 S3-12 实例使用 [127.0.0.1:58080](http://127.0.0.1:58080/)，支持真实千问和私有 OSS。正式更新需要本机已有实例及单独保管的 S3-12 交付包。
 
 - [正式更新与运维](deploy/README.md)
-- [千问与 OSS 操作指南](docs/S3_11_USER_GUIDE.md)
-- [产品要求、架构与历史资料](docs/README.md)
+- [千问与 OSS 操作指南](docs/guides/QWEN_OSS.md)
+- [产品、架构与测试文档](docs/README.md)
+
+## 授权说明
+
+本仓库目前未指定项目许可证。第三方依赖适用各自的许可证。

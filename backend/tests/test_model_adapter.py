@@ -26,7 +26,7 @@ def test_visual_only_is_explicitly_supported():
 
 def test_request_contract_excludes_private_identity_and_paths():
     names={field.name for field in fields(ModelRequest)}
-    assert not names.intersection({'task_id','user_id','email','filename','url','path','api_key','credentials'})
+    assert not names.intersection({'user_id','email','filename','url','path','api_key','credentials'})
     value=request()
     assert b'jpeg-first'.decode() not in repr(value)
     assert 'synthetic audio bytes' not in repr(value)
