@@ -7,7 +7,7 @@ from pathlib import Path
 import threading
 import time
 from urllib.parse import unquote
-from uuid import uuid4, UUID
+from uuid import uuid4
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool

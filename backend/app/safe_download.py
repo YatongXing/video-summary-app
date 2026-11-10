@@ -7,7 +7,7 @@ from pathlib import Path
 import socket
 import ssl
 import time
-from urllib.parse import urlsplit, urljoin, unquote
+from urllib.parse import urlsplit, urljoin
 from app.media import InputError
 
 def validate_url(url: str):

@@ -5,7 +5,6 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 import json
 import logging
-import os
 import random
 import re
 import time

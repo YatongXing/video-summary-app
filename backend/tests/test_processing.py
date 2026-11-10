@@ -152,11 +152,14 @@ def test_live_workspace_is_preserved_and_cancelled_workspace_recovered_by_worker
         stop=threading.Event();thread=threading.Thread(target=run,args=(stop,.01),daemon=True)
         thread.start()
         try:
-            for _ in range(40):
-                if not directory.exists():break
+            deadline=time.monotonic()+2
+            while True:
+                state=db.execute("SELECT cleanup_state FROM media_assets WHERE asset_kind='PROCESSING_WORKSPACE'").fetchone()[0]
+                if not directory.exists() and state=='DELETED':break
+                if time.monotonic()>=deadline:break
                 time.sleep(.05)
             assert not directory.exists()
-            assert db.execute("SELECT cleanup_state FROM media_assets WHERE asset_kind='PROCESSING_WORKSPACE'").fetchone()[0]=='DELETED'
+            assert state=='DELETED'
         finally:stop.set();thread.join(timeout=2)
         assert not thread.is_alive()
 

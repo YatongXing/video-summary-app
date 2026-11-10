@@ -10,12 +10,11 @@ import json
 import os
 from pathlib import Path
 from uuid import UUID, uuid4
-from botocore.exceptions import ClientError
 from psycopg.rows import dict_row
 class JournalError(RuntimeError):
     pass
 
-from app import tasks, object_store
+from app import tasks
 
 
 def _root():

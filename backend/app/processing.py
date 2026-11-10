@@ -5,7 +5,6 @@ from pathlib import Path
 import logging
 import os
 import re
-import shutil
 import time
 from uuid import uuid4
 from app import object_store, tasks
