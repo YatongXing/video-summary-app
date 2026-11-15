@@ -7,7 +7,7 @@ type Task = {
   id: string; status: string; filename: string | null; submitted_at: string
   started_at: string | null; finished_at: string | null; retry_count: number
   cooldown_seconds: number; retry_allowed: boolean; retry_reason: string | null
-  failure_category: string | null; failure_code?: string | null; refund_status: string; api_fee_warning: boolean
+  failure_category: string | null; failure_code?: string | null; refund_status: string
   duration_seconds?: number; queue_seconds?: number | null; processing_seconds?: number | null; target_seconds?: number | null
 }
 const labels: Record<string, string> = { QUEUED: '排队中', PROCESSING: '处理中', SUCCEEDED: '已完成', FAILED: '失败', CANCELLED: '已取消' }
@@ -151,7 +151,7 @@ export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
   return (
     <section className="task-section" aria-labelledby="tasks-title">
       <div className="section-heading"><span className="eyebrow">处理机会与任务</span><h2 id="tasks-title">我的视频任务</h2></div>
-      {quota && <div className="quota-card"><strong>{quota.unlimited ? '管理员 · 处理次数不限' : `可用处理机会：${quota.credits} / 3`}</strong>{!quota.unlimited && recovery !== null && <span>下次恢复约需 {duration(recovery)}。以服务器结果为准。</span>}<span>导入和排队不扣机会；同一任务重试不额外扣机会。</span></div>}
+      {quota && <div className="quota-card"><strong>{quota.unlimited ? '管理员 · 处理次数不限' : `可用处理机会：${quota.credits} / 1`}</strong>{!quota.unlimited && recovery !== null && <span>下次恢复约需 {duration(recovery)}。以服务器结果为准。</span>}<span>同一任务重试不额外扣机会</span></div>}
       {error && <p className="message error" role="alert">{error}</p>}
       {actionError && <p className="message error" role="alert">{actionError}</p>}
       {notice && <p className="message notice" role="status">{notice}</p>}
@@ -173,8 +173,7 @@ export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
           {task.failure_category && <p>{(task.failure_code && modelFailures[task.failure_code]) || failures[task.failure_category] || '任务失败，原因待核实'}</p>}
           {task.failure_code && <p>错误代码：{task.failure_code}</p>}
           {cooldown > 0 && <p className="task-wait">再次尝试约需等待 {duration(cooldown)}。等待结束后仍须由服务器确认。</p>}
-          {task.status === 'FAILED' && !task.retry_allowed && cooldown <= 0 && <p className="field-help">{task.retry_count >= 20 ? '已达到累计重试上限。' : '当前状态暂不可重试，请刷新确认。'}</p>}
-          {task.api_fee_warning && <p className="fee-warning">模型服务反复超时。继续重试可能产生模型 API 费用，但不会额外扣除此任务的处理机会。</p>}
+          {task.status === 'FAILED' && !task.retry_allowed && cooldown <= 0 && <p className="field-help">{task.retry_count >= 20 ? '已达到累计重试上限。' : task.retry_reason === 'MODEL_DISABLED' ? '此任务的处理模型暂未启用。' : task.retry_reason === 'MODEL_REQUEST_UNCONFIRMED' ? '上次模型调用状态未确认，请联系管理员核对。' : '当前状态暂不可重试，请刷新确认。'}</p>}
           <div className="task-actions"><button className="secondary" type="button" disabled={pending !== null} onClick={() => void removeTask(task)}>删除任务</button>{task.status === 'SUCCEEDED' && <button className="secondary" type="button" onClick={() => setSelectedTask(current => current === task.id ? null : task.id)} aria-expanded={selectedTask === task.id}>{selectedTask === task.id ? '收起结果' : '查看结果'}</button>}{(task.status === 'QUEUED' || task.status === 'PROCESSING') && <button type="button" className="secondary" disabled={pending !== null} onClick={() => void act(task, 'cancel')}>{pending === task.id ? '正在处理…' : '取消任务'}</button>}{task.status === 'FAILED' && <button type="button" className="secondary" disabled={pending !== null || !task.retry_allowed || cooldown > 0} onClick={() => void act(task, 'retry')}>{pending === task.id ? '正在处理…' : '重试任务'}</button>}</div>
           {selectedTask === task.id && task.status === 'SUCCEEDED' && <ResultPanel key={`result-${task.id}`} taskId={task.id} onExpired={onExpired} />}
         </li>

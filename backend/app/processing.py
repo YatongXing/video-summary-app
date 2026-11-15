@@ -1,6 +1,7 @@
 """Private media -> model candidate. Final output validation belongs to S3-08."""
 from app import maintenance
 from contextlib import contextmanager, ExitStack
+from dataclasses import replace
 from pathlib import Path
 import logging
 import os
@@ -75,7 +76,7 @@ def recover_workspaces():
     from app.cleanup import io_activity
     if not task_locks.producer_ready():return []
     with tasks.connect() as c:
-        rows=c.execute("SELECT * FROM media_assets WHERE asset_kind IN ('PROCESSING_WORKSPACE','QWEN_TRANSFER') AND cleanup_state<>'DELETED'").fetchall()
+        rows=c.execute("SELECT * FROM media_assets WHERE asset_kind IN ('PROCESSING_WORKSPACE','QWEN_TRANSFER','ASR_AUDIO_TRANSFER') AND cleanup_state<>'DELETED'").fetchall()
         maintenance.ensure_open()
     recovered=[]
     for row in rows:
@@ -88,6 +89,9 @@ def recover_workspaces():
                     maintenance.ensure_open()
                 if row['asset_kind'] == 'QWEN_TRANSFER':
                     cleaned = _clean_cloud_asset(row)
+                elif row['asset_kind'] == 'ASR_AUDIO_TRANSFER':
+                    from app.asr_transfer import clean_audio_asset
+                    cleaned = clean_audio_asset(row)
                 else:
                     if row['storage_backend']!=workspace_backend():continue
                     cleaned = _clean_registered(row['id'],row['storage_key'])
@@ -231,9 +235,30 @@ class _AudioReader:
         except BaseException:self.close();raise
     def __exit__(self,*args):self.close()
 
+def _deepseek_phase(context, phase, job_id=None):
+    def write(connection, task):
+        connection.execute(
+            'UPDATE model_calls SET deepseek_phase=%s, asr_provider_task_id=COALESCE(%s,asr_provider_task_id) '
+            'WHERE task_id=%s AND lease_generation=%s',
+            (phase, job_id, task['id'], context.generation),
+        )
+    context.fenced_write(write)
+
+
+def _deadline_checkpoint(context, deadline):
+    def check():
+        _check(context)
+        if time.monotonic() > deadline:
+            raise AdapterError('timeout')
+        return True
+    return check
+
+
 def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
     """One adapter attempt; never invokes complete or automatically retries."""
     maintenance.ensure_open()
+    from app.deepseek_adapter import DeepSeekModelAdapter, MAX_FRAMES, MAX_FRAME_BYTES, ASR_SECONDS
+    deepseek = isinstance(adapter, DeepSeekModelAdapter)
     try:
         _check(context)
         def source(c,task):
@@ -244,7 +269,10 @@ def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
         key,duration,filename=context.fenced_write(source)
         with _workspace(context) as directory, ExitStack() as transfers:
             original=directory/'original'
-            timeout=float(os.getenv('MODEL_ADAPTER_TIMEOUT_SECONDS','120'))
+            if deepseek:
+                timeout = int(os.getenv('DEEPSEEK_SUMMARY_TIMEOUT_SECONDS', '3600'))
+            else:
+                timeout = float(os.getenv('MODEL_ADAPTER_TIMEOUT_SECONDS', '120'))
             inline_limit=getattr(adapter,'max_inline_video_bytes',None)
             if inline_limit is not None:
                 if duration is None:raise AdapterError('input')
@@ -257,6 +285,16 @@ def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
                     open_video=None if use_cloud else lambda:_AudioReader(context,original),video_url=url,
                     task_id=str(context.id))
                 policy_version='qwen-oss-video-v1' if use_cloud else 'qwen-inline-video-v1'
+            elif deepseek:
+                download_original(key, original, lambda: _check(context))
+                prepared = prepare_media(original, directory, checkpoint=lambda: _check(context), max_frames=MAX_FRAMES)
+                if not prepared.frames or any(frame.path.stat().st_size > MAX_FRAME_BYTES for frame in prepared.frames):
+                    raise AdapterError('evidence_budget')
+                frames = tuple(VisualEvidence(f.timestamp_seconds, _read_frame(context, f.path))
+                               for f in prepared.frames)
+                request = ModelRequest(prepared.duration_seconds, frames, limitations=prepared.limitations,
+                                       prompt_version=adapter.prompt_version, timeout_seconds=timeout)
+                policy_version = 'deepseek-first-track-aac-v2'
             else:
                 download_original(key,original,lambda:_check(context))
                 prepared=prepare_media(original,directory,checkpoint=lambda:_check(context))
@@ -268,13 +306,22 @@ def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
                 attempt=c.execute('SELECT id FROM task_attempts WHERE task_id=%s AND lease_generation=%s',(task['id'],context.generation)).fetchone()
                 row=c.execute('''INSERT INTO model_calls(task_id,user_id,attempt_id,lease_generation,status,model_version,adapter_version,prompt_version,policy_version) VALUES (%s,%s,%s,%s,'RUNNING',%s,%s,%s,%s) ON CONFLICT (task_id,lease_generation) DO NOTHING RETURNING id''',(task['id'],task['user_id'],attempt['id'],context.generation,model,version,request.prompt_version,policy_version)).fetchone()
                 if row is None:raise AlreadyAnalyzed()
-            context.fenced_write(begin);deadline=time.monotonic()+request.timeout_seconds
-            def checkpoint():
-                _check(context)
-                if time.monotonic()>deadline:raise AdapterError('timeout')
-                return True
+            context.fenced_write(begin)
             try:
-                response=adapter.analyze(request,checkpoint=checkpoint)
+                if deepseek:
+                    def phase(value, job_id=None):
+                        _deepseek_phase(context, value, job_id)
+                    if prepared.audio is not None:
+                        url = adapter.upload_audio(prepared.audio.path, lambda: _check(context))
+                        asr_check = _deadline_checkpoint(context, time.monotonic() + ASR_SECONDS)
+                        transcript = adapter.transcribe(url, prepared.audio, prepared.duration_seconds, asr_check, phase)
+                        request = replace(request, transcript=transcript)
+                deadline = time.monotonic() + request.timeout_seconds
+                checkpoint = _deadline_checkpoint(context, deadline)
+                if deepseek:
+                    response = adapter.analyze(request, checkpoint, phase, deadline=deadline)
+                else:
+                    response=adapter.analyze(request,checkpoint=checkpoint)
                 _check(context)
                 if time.monotonic()>deadline:
                     try:

@@ -59,8 +59,9 @@ def test_upgrade_preserves_old_content_quota_and_consents(wp02_factory,tmp_path,
         c.execute("""INSERT INTO task_results(task_id,user_id,language,lease_generation,export_document,presentation)
                      VALUES(%s,%s,'zh',0,'{"summary":"synthetic-only"}','{}')""",(t,u))
         before=snapshot(c)
-        monkeypatch.setattr(migrate,"MIGRATIONS_DIR",MIGRATIONS)
-        assert migrate.run_migrations(c)==["010_cr_support_expand.sql"]
+        support_migration = "010_cr_support_expand.sql"
+        shutil.copyfile(MIGRATIONS/support_migration, old/support_migration)
+        assert migrate.run_migrations(c)==[support_migration]
         after=snapshot(c)
         # New column default is the only permitted difference to old task rows.
         import json
@@ -72,7 +73,7 @@ def test_upgrade_preserves_old_content_quota_and_consents(wp02_factory,tmp_path,
         assert after==before
         assert migrate.run_migrations(c)==[]
         recorded=dict(c.execute("SELECT version,sha256 FROM schema_migrations"))
-        assert all(recorded[p.name]==sha256(p.read_bytes()).hexdigest() for p in MIGRATIONS.glob("*.sql"))
+        assert all(recorded[p.name]==sha256(p.read_bytes()).hexdigest() for p in old.glob("*.sql"))
 
 
 @pytest.mark.parametrize("autocommit",[True,False])
@@ -116,7 +117,30 @@ def test_two_migrators_record_each_version_once(wp02_factory):
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes=[x.result(timeout=30) for x in [pool.submit(run),pool.submit(run)]]
     assert sorted(name for result in outcomes for name in result)==sorted(p.name for p in MIGRATIONS.glob("*.sql"))
-    with db.connect() as c:assert c.execute("SELECT count(*) FROM schema_migrations").fetchone()==(10,)
+    with db.connect() as c:assert c.execute("SELECT count(*) FROM schema_migrations").fetchone()==(12,)
+
+
+def test_012_defaults_existing_tasks_and_constrains_model_choice(wp02_factory,tmp_path,monkeypatch):
+    from app import migrate
+    target=tmp_path/'published';target.mkdir()
+    for p in sorted(MIGRATIONS.glob('*.sql')):
+        if p.name<'012_':shutil.copyfile(p,target/p.name)
+    assert len(list(target.glob('*.sql')))==11
+    monkeypatch.setattr(migrate,'MIGRATIONS_DIR',target)
+    db=wp02_factory()
+    with db.connect() as c:
+        u,t=seed(c)
+        before=dict(c.execute('SELECT version,sha256 FROM schema_migrations'))
+        migration='012_task_model_selection.sql'
+        shutil.copyfile(MIGRATIONS/migration,target/migration)
+        assert migrate.run_migrations(c)==[migration]
+        assert c.execute('SELECT requested_model FROM tasks WHERE id=%s',(t,)).fetchone()==('qwen3.8-omni-flash',)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            c.execute("INSERT INTO tasks(user_id,input_kind,requested_model) VALUES (%s,'LOCAL','unknown')",(u,))
+        assert migrate.run_migrations(c)==[]
+        recorded=dict(c.execute('SELECT version,sha256 FROM schema_migrations'))
+        assert recorded.pop(migration)==sha256((target/migration).read_bytes()).hexdigest()
+        assert recorded==before
 
 
 def test_outer_transaction_can_rollback_successful_schema_upgrade(wp02_factory):

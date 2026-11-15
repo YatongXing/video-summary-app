@@ -36,7 +36,7 @@ def test_commit_failure_rolls_back_bilingual_success_and_refunds_once(result_db,
     assert db.execute('SELECT status FROM task_attempts WHERE task_id=%s',(tid,)).fetchone()[0]=='FAILED'
     tasks.fail_task(tid,generation,'INTERNAL',owner='result-test-worker')
     assert db.execute("SELECT count(*) FROM quota_events WHERE task_id=%s AND event_type='REFUND'",(tid,)).fetchone()[0]==1
-    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==3
+    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==1
     async def scenario():
         async with client() as c:
             authenticated(db,c,uid)
@@ -55,7 +55,7 @@ def test_private_storage_read_failure_fails_pipeline_without_model_or_export(bri
     assert db.execute('SELECT status,failure_category FROM tasks').fetchone()==('FAILED','INTERNAL')
     assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0]==0
     assert db.execute('SELECT count(*) FROM task_results').fetchone()[0]==0
-    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==3
+    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==1
     assert db.execute("SELECT count(*) FROM quota_events WHERE event_type='REFUND'").fetchone()[0]==1
     assert not list(root.iterdir())
 

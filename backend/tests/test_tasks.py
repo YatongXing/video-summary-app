@@ -39,8 +39,8 @@ def clock(monkeypatch):
     monkeypatch.setattr(tasks,'utcnow',lambda:value[0])
     return value
 
-def user(db,role='USER'):
-    return db.execute('INSERT INTO users(email_normalized,password_hash,role) VALUES (%s,%s,%s) RETURNING id',(str(uuid4())+'@example.invalid','synthetic-hash',role)).fetchone()[0]
+def user(db,role='USER',credits=1):
+    return db.execute('INSERT INTO users(email_normalized,password_hash,role,credits_available) VALUES (%s,%s,%s,%s) RETURNING id',(str(uuid4())+'@example.invalid','synthetic-hash',role,credits)).fetchone()[0]
 
 def task(db,uid):
     return db.execute("INSERT INTO tasks(user_id,input_kind) VALUES (%s,'LOCAL') RETURNING id",(uid,)).fetchone()[0]
@@ -50,54 +50,66 @@ def state(db,tid): return db.execute('SELECT status FROM tasks WHERE id=%s',(tid
 def count(db,event): return db.execute('SELECT count(*) FROM quota_events WHERE event_type=%s',(event,)).fetchone()[0]
 def generation(result): return result['generation']
 
-def test_recovery_anchor_not_reset_by_later_use_and_stops_at_cap(db,clock):
+@pytest.mark.parametrize('credits',[2,3])
+def test_legacy_balance_is_capped_without_a_new_quota_event(db,clock,credits):
     from app import tasks
-    uid=user(db); assert tasks.quota(uid)['credits']==3
-    t0=clock[0]; first=task(db,uid); gen=generation(tasks.start_task(first)); tasks.succeed_task(first,gen); assert balance(db,uid)==2
-    clock[0]=t0+timedelta(hours=1); second=task(db,uid); gen=generation(tasks.start_task(second)); tasks.succeed_task(second,gen); assert balance(db,uid)==1
-    clock[0]=t0+timedelta(hours=6); assert tasks.quota(uid)['credits']==2
-    clock[0]=t0+timedelta(hours=12); assert tasks.quota(uid)['credits']==3
-    assert db.execute('SELECT recovery_started_at FROM users WHERE id=%s',(uid,)).fetchone()[0] is None
-    clock[0]=t0+timedelta(hours=13); tasks.start_task(task(db,uid))
-    assert db.execute('SELECT recovery_started_at FROM users WHERE id=%s',(uid,)).fetchone()[0]==clock[0]
-    clock[0]=t0+timedelta(days=3); assert tasks.quota(uid)['credits']==3
+    uid=user(db,credits=credits)
+    db.execute('UPDATE users SET recovery_started_at=%s WHERE id=%s',(clock[0]-timedelta(hours=1),uid))
+    assert tasks.quota(uid)=={'credits':1,'unlimited':False,'recovery_seconds':None}
+    assert balance(db,uid)==1 and count(db,'RECOVER')==0
 
-def test_refund_independent_of_timer_and_duplicate_failure(db,clock):
+
+def test_recovery_preserves_zero_balance_timer_and_stops_at_cap(db,clock):
     from app import tasks
-    uid=user(db); ids=[task(db,uid) for _ in range(3)]; t0=clock[0]
-    gens=[]
-    for index,tid in enumerate(ids):
-        clock[0]=t0+timedelta(hours=index); gens.append(generation(tasks.start_task(tid)))
-        if index<2: tasks.succeed_task(tid,gens[-1])
+    t0=clock[0]
+    uid=user(db,credits=0)
+    db.execute('UPDATE users SET recovery_started_at=%s WHERE id=%s',(t0,uid))
+    clock[0]=t0+timedelta(hours=5,minutes=59)
+    assert tasks.quota(uid)=={'credits':0,'unlimited':False,'recovery_seconds':60}
+    clock[0]=t0+timedelta(hours=6)
+    assert tasks.quota(uid)=={'credits':1,'unlimited':False,'recovery_seconds':None}
+    assert count(db,'RECOVER')==1
+    clock[0]=t0+timedelta(hours=13)
+    tasks.start_task(task(db,uid))
+    assert tasks.quota(uid)=={'credits':0,'unlimited':False,'recovery_seconds':21600}
+    clock[0]=t0+timedelta(days=3)
+    assert tasks.quota(uid)['credits']==1 and count(db,'RECOVER')==2
+
+
+def test_refund_restores_one_stops_recovery_and_is_idempotent(db,clock):
+    from app import tasks
+    uid=user(db);tid=task(db,uid);gen=generation(tasks.start_task(tid))
     assert balance(db,uid)==0
-    clock[0]=t0+timedelta(hours=3)
-    tasks.fail_task(ids[2],gens[2],'INTERNAL'); tasks.fail_task(ids[2],gens[2],'INTERNAL')
-    assert balance(db,uid)==1 and count(db,'REFUND')==1
-    assert db.execute('SELECT recovery_started_at FROM users WHERE id=%s',(uid,)).fetchone()[0]==t0
-    clock[0]=t0+timedelta(hours=6); assert tasks.quota(uid)['credits']==2
+    clock[0]+=timedelta(hours=3)
+    tasks.fail_task(tid,gen,'INTERNAL'); tasks.fail_task(tid,gen,'INTERNAL')
+    assert balance(db,uid)==1
+    assert db.execute('SELECT recovery_started_at FROM users WHERE id=%s',(uid,)).fetchone()[0] is None
+    assert count(db,'REFUND')==1 and count(db,'RECOVER')==0
+
 
 @pytest.mark.parametrize('category,refund',[('INTERNAL',True),('EXTERNAL_TIMEOUT',True),('EXTERNAL_RATE_LIMIT',True),('EXTERNAL_UNAVAILABLE',True),('UNKNOWN',True),('USER_INPUT',False),('USER_CANCELLED',False)])
 def test_failure_categories_and_no_retry_recharge(db,clock,category,refund):
     from app import tasks
     uid=user(db); tid=task(db,uid); gen=generation(tasks.start_task(tid))
     tasks.fail_task(tid,gen,category)
-    assert balance(db,uid)==(3 if refund else 2)
+    assert balance(db,uid)==(1 if refund else 0)
     assert count(db,'REFUND')==int(refund)
     if category!='USER_CANCELLED':
         tasks.request_retry(tid,uid,str(uuid4()))
         gen=generation(tasks.start_task(tid)); tasks.fail_task(tid,gen,category)
         assert count(db,'SPEND')==1 and count(db,'REFUND')==int(refund)
-        assert balance(db,uid)==(3 if refund else 2)
+        assert balance(db,uid)==(1 if refund else 0)
 
 def test_queue_cancel_processing_cancel_and_success_finality(db,clock):
     from app import tasks
     uid=user(db); queued=task(db,uid)
     tasks.cancel_task(queued,uid); tasks.cancel_task(queued,uid)
-    assert state(db,queued)=='CANCELLED' and balance(db,uid)==3 and count(db,'SPEND')==0
+    assert state(db,queued)=='CANCELLED' and balance(db,uid)==1 and count(db,'SPEND')==0
     with pytest.raises(HTTPException): tasks.request_retry(queued,uid,str(uuid4()))
     processing=task(db,uid); gen=generation(tasks.start_task(processing)); tasks.cancel_task(processing,uid)
     tasks.fail_task(processing,gen,'INTERNAL')
-    assert state(db,processing)=='CANCELLED' and balance(db,uid)==2 and count(db,'REFUND')==0
+    assert state(db,processing)=='CANCELLED' and balance(db,uid)==0 and count(db,'REFUND')==0
+    clock[0]+=timedelta(hours=6)
     succeeded=task(db,uid); gen=generation(tasks.start_task(succeeded)); tasks.succeed_task(succeeded,gen); tasks.cancel_task(succeeded,uid)
     assert state(db,succeeded)=='SUCCEEDED'
 
@@ -107,17 +119,17 @@ def test_two_workers_and_repeated_failure_only_spend_refund_once(db,clock):
     with ThreadPoolExecutor(max_workers=2) as pool:
         started=list(pool.map(lambda _:tasks.start_task(tid),range(2)))
     assert len({generation(r) for r in started})==1
-    assert count(db,'SPEND')==1 and balance(db,uid)==2
+    assert count(db,'SPEND')==1 and balance(db,uid)==0
     with ThreadPoolExecutor(max_workers=2) as pool:
         list(pool.map(lambda _:tasks.fail_task(tid,generation(started[0]),'INTERNAL'),range(2)))
-    assert count(db,'REFUND')==1 and balance(db,uid)==3
+    assert count(db,'REFUND')==1 and balance(db,uid)==1
 
 def test_admin_unlimited_has_no_credit_events(db,clock):
     from app import tasks
-    uid=user(db,'ADMIN'); assert tasks.quota(uid)['unlimited'] is True and tasks.quota(uid)['credits'] is None
+    uid=user(db,'ADMIN',credits=3); assert tasks.quota(uid)['unlimited'] is True and tasks.quota(uid)['credits'] is None
     for _ in range(5):
         tid=task(db,uid); gen=generation(tasks.start_task(tid)); tasks.fail_task(tid,gen,'INTERNAL')
-    assert count(db,'SPEND')==0 and count(db,'REFUND')==0
+    assert count(db,'SPEND')==0 and count(db,'REFUND')==0 and balance(db,uid)==3
 
 def test_retry_fifth_triggers_cooldown_rejections_do_not_extend_or_count(db,clock):
     from app import tasks
@@ -182,9 +194,10 @@ def test_http_private_list_quota_cancel_retry_csrf(db):
             assert (await c.get('/quota')).status_code==401
             data={'email':'taskowner@example.invalid','password':'Synthetic-test-only-42!'}
             registered=await c.post('/auth/register',json=data); assert registered.status_code==201
-            uid=registered.json()['id']; tid=task(db,uid);other=task(db,user(db))
+            uid=registered.json()['id']; assert balance(db,uid)==1
+            tid=task(db,uid);other=task(db,user(db))
             login=await c.post('/auth/login',json=data);csrf=login.json()['csrf_token']
-            quota=await c.get('/quota');assert quota.status_code==200 and quota.json()['credits']==3
+            quota=await c.get('/quota');assert quota.status_code==200 and quota.json()['credits']==1
             listed=await c.get('/tasks');assert listed.status_code==200 and {r['id'] for r in listed.json()}=={str(tid)}
             assert (await c.get('/tasks/'+str(other))).status_code==404
             assert (await c.post('/tasks/'+str(tid)+'/cancel')).status_code==403
@@ -200,16 +213,16 @@ def test_unknown_categories_never_become_success(db,clock,category):
     from app import tasks
     uid=user(db);tid=task(db,uid);gen=generation(tasks.start_task(tid))
     tasks.fail_task(tid,gen,category)
-    assert state(db,tid)=='FAILED' and balance(db,uid)==3
+    assert state(db,tid)=='FAILED' and balance(db,uid)==1
     assert db.execute('SELECT failure_category FROM tasks WHERE id=%s',(tid,)).fetchone()[0]=='UNKNOWN'
 
 
-def test_refund_after_natural_recovery_never_exceeds_three(db,clock):
+def test_refund_after_natural_recovery_never_exceeds_one(db,clock):
     from app import tasks
     uid=user(db);tid=task(db,uid);gen=generation(tasks.start_task(tid))
-    clock[0]+=timedelta(hours=6);assert tasks.quota(uid)['credits']==3
+    clock[0]+=timedelta(hours=6);assert tasks.quota(uid)['credits']==1
     tasks.fail_task(tid,gen,'INTERNAL');tasks.fail_task(tid,gen,'INTERNAL')
-    assert balance(db,uid)==3 and count(db,'REFUND')==1
+    assert balance(db,uid)==1 and count(db,'REFUND')==1
 
 
 def test_distinct_workers_and_distinct_tasks_respect_single_active_user(db,clock):
@@ -235,14 +248,14 @@ def test_cancel_failure_race_has_one_final_category_and_settlement(db,clock):
     with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(action,['cancel','fail']))
     final=state(db,tid);assert final in ('CANCELLED','FAILED')
     assert count(db,'REFUND')==int(final=='FAILED')
-    assert balance(db,uid)==(3 if final=='FAILED' else 2)
+    assert balance(db,uid)==(1 if final=='FAILED' else 0)
 
 
 def test_disabled_user_cannot_start_and_failure_before_start_cannot_refund(db,clock):
     from app import tasks
     uid=user(db);tid=task(db,uid)
     with pytest.raises(HTTPException):tasks.fail_task(tid,0,'INTERNAL')
-    assert count(db,'REFUND')==0 and balance(db,uid)==3
+    assert count(db,'REFUND')==0 and balance(db,uid)==1
     db.execute('UPDATE users SET disabled_at=%s WHERE id=%s',(clock[0],uid))
     with pytest.raises(HTTPException):tasks.start_task(tid)
     assert count(db,'SPEND')==0
@@ -262,6 +275,31 @@ def test_worker_reported_user_cancellation_is_terminal(db,clock):
     from app import tasks
     uid=user(db);tid=task(db,uid);gen=generation(tasks.start_task(tid))
     tasks.fail_task(tid,gen,'USER_CANCELLED')
-    assert state(db,tid)=='CANCELLED' and balance(db,uid)==2 and count(db,'REFUND')==0
+    assert state(db,tid)=='CANCELLED' and balance(db,uid)==0 and count(db,'REFUND')==0
     with pytest.raises(HTTPException):tasks.request_retry(tid,uid,str(uuid4()))
     assert db.execute('SELECT status FROM task_attempts WHERE task_id=%s',(tid,)).fetchone()[0]=='CANCELLED'
+
+@pytest.mark.parametrize('phase',['ASR_SUBMITTING','ASR_WAITING','SUMMARY_SUBMITTING'])
+def test_deepseek_retry_waits_for_reconciliation_and_keeps_model(db,clock,monkeypatch,phase):
+    from app import tasks
+    monkeypatch.setenv('DEEPSEEK_ENABLED','true')
+    uid=user(db)
+    tid=db.execute("INSERT INTO tasks(user_id,input_kind,requested_model) VALUES (%s,'LOCAL','deepseek-v4.1-flash') RETURNING id",(uid,)).fetchone()[0]
+    gen=generation(tasks.start_task(tid))
+    attempt=db.execute('SELECT id FROM task_attempts WHERE task_id=%s',(tid,)).fetchone()[0]
+    db.execute('''INSERT INTO model_calls(task_id,user_id,attempt_id,lease_generation,status,model_version,adapter_version,prompt_version,policy_version,deepseek_phase)
+                  VALUES(%s,%s,%s,%s,'FAILED','deepseek-v4.1-flash','test','test','test',%s)''',(tid,uid,attempt,gen,phase))
+    tasks.fail_task(tid,gen,'EXTERNAL_TIMEOUT')
+    view=tasks.get_task(tid,uid)
+    assert not view['retry_allowed'] and view['retry_reason']=='MODEL_REQUEST_UNCONFIRMED'
+    with pytest.raises(HTTPException) as error:tasks.request_retry(tid,uid,uuid4(),source='SYSTEM')
+    assert error.value.status_code==409
+    db.execute("UPDATE model_calls SET deepseek_phase='FINISHED' WHERE task_id=%s",(tid,))
+    monkeypatch.setenv('DEEPSEEK_ENABLED','false')
+    assert tasks.get_task(tid,uid)['retry_reason']=='MODEL_DISABLED'
+    with pytest.raises(HTTPException) as error:tasks.request_retry(tid,uid,uuid4())
+    assert error.value.status_code==409
+    monkeypatch.setenv('DEEPSEEK_ENABLED','true')
+    assert tasks.request_retry(tid,uid,uuid4())['requested_model']=='deepseek-v4.1-flash'
+    assert tasks.start_task(tid)['requested_model']=='deepseek-v4.1-flash'
+    assert count(db,'SPEND')==count(db,'REFUND')==1

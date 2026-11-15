@@ -1,9 +1,9 @@
 [CmdletBinding(SupportsShouldProcess)]
-param([string]$PrivateEnvPath)
+param([string]$PrivateEnvPath, [string]$ReleasePath)
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$release = Join-Path $repo 'release/s3-12-local'
+$release = if ($ReleasePath) { (Resolve-Path -LiteralPath $ReleasePath).Path } else { Join-Path $repo 'release/s3-12-stage-b-all-sse-2026-11-15' }
 $launcher = Join-Path $release 'deploy/Start-S3-12.ps1'
 $modelEnv = Join-Path $repo '.env'
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $release 'manifest.json') | ConvertFrom-Json
@@ -33,6 +33,7 @@ if (!$PrivateEnvPath -or !(Test-Path -LiteralPath $PrivateEnvPath -PathType Leaf
 }
 if (!(Test-Path -LiteralPath $modelEnv -PathType Leaf)) { throw 'The repository model .env is missing.' }
 
-if ($PSCmdlet.ShouldProcess('vsa-local', 'Apply the verified S3-12 release and repository model settings')) {
-    & $launcher -Action UpgradeFormal -PrivateEnvPath $PrivateEnvPath -ModelEnvPath $modelEnv
+$enableDeepSeek = $manifest.default_deepseek_enabled -is [bool] -and $manifest.default_deepseek_enabled
+if ($PSCmdlet.ShouldProcess('vsa-local', "Apply the verified S3-12 release (DeepSeek enabled: $enableDeepSeek)")) {
+    & $launcher -Action UpgradeFormal -PrivateEnvPath $PrivateEnvPath -ModelEnvPath $modelEnv -EnableDeepSeek:$enableDeepSeek
 }

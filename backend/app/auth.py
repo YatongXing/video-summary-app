@@ -1,6 +1,7 @@
 """Server-side identity, sessions and reusable task authorization boundaries."""
 from __future__ import annotations
 from app import maintenance
+from app.tasks import USER_CREDIT_LIMIT
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -166,8 +167,8 @@ def register(data: Registration, request: Request):
             return JSONResponse({'detail': 'Please try again later'}, status_code=429)
         record_limit(connection, keys)
         hashed = password_hash(data.password)
-        row = connection.execute('''INSERT INTO users(email_normalized,password_hash) VALUES (%s,%s)
-            ON CONFLICT (email_normalized) DO NOTHING RETURNING id,email_normalized,role''', (data.email, hashed)).fetchone()
+        row = connection.execute('''INSERT INTO users(email_normalized,password_hash,credits_available) VALUES (%s,%s,%s)
+            ON CONFLICT (email_normalized) DO NOTHING RETURNING id,email_normalized,role''', (data.email, hashed, USER_CREDIT_LIMIT)).fetchone()
         if row is None:
             maintenance.ensure_open()
             return JSONResponse({'detail': 'Registration unavailable'}, status_code=409)
@@ -301,7 +302,7 @@ def admin_tasks(request:Request, task_id:str=Query(''), limit:int=Query(50,ge=1,
             row['queue_seconds']=max(0,float(row['queue_seconds']))
             if row['processing_seconds'] is not None: row['processing_seconds']=max(0,float(row['processing_seconds']))
             row['quota_unlimited']=row.pop('role')=='ADMIN'
-            if row['quota_unlimited']: row['credits_available']=None
+            row['credits_available']=None if row['quota_unlimited'] else min(row['credits_available'],USER_CREDIT_LIMIT)
             row['retry_records']=connection.execute('SELECT source,accepted_at,cooldown_triggered FROM retry_events WHERE task_id=%s ORDER BY accepted_at,id',(row['id'],)).fetchall()
             row['quota_events']=connection.execute('SELECT event_type,delta,created_at FROM quota_events WHERE task_id=%s ORDER BY created_at,id',(row['id'],)).fetchall()
             row['model_calls']=connection.execute('SELECT status,model_version,adapter_version,prompt_version,input_tokens,output_tokens,cached_tokens,estimated_cost,currency,error_category,created_at,finished_at FROM model_calls WHERE task_id=%s ORDER BY created_at,id',(row['id'],)).fetchall()

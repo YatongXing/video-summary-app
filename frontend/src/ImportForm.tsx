@@ -3,6 +3,9 @@ import type { FormEvent } from 'react'
 import { validTaskId } from './TaskIdentifier'
 
 type Imported = { id: string; status: 'QUEUED'; filename: string; duration_seconds: number; has_audio: boolean }
+export const QWEN_MODEL = 'qwen3.8-omni-flash'
+export const DEEPSEEK_MODEL = 'deepseek-v4.1-flash'
+type Model = typeof QWEN_MODEL | typeof DEEPSEEK_MODEL
 type Source = 'local' | 'url'
 type TransferResult = { status: number; body: unknown }
 
@@ -32,6 +35,8 @@ function importError(status: number, body: unknown): string {
     INVALID_MEDIA: '无法完整读取此视频，请检查文件是否损坏。',
     UNSAFE_URL: '此链接不符合安全要求，请使用可直接访问的 HTTPS 视频文件链接。',
     RIGHTS_REQUIRED: '请先确认拥有导入和处理该视频的授权。',
+    INVALID_MODEL: '不支持所选处理模型。',
+    MODEL_DISABLED: '所选处理模型暂未启用。请刷新后重新选择。',
   }
   if (messages[code]) return messages[code]
   if (status === 401) return '登录已失效，请重新登录后导入。'
@@ -48,8 +53,11 @@ function parseBody(text: string): unknown {
   try { return JSON.parse(text) as unknown } catch { return null }
 }
 
-export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfToken: string; onExpired: () => void; onImported?: () => void }) {
+export default function ImportForm({ csrfToken, deepseekAvailable, onExpired, onImported }: {
+  csrfToken: string; deepseekAvailable: boolean; onExpired: () => void; onImported?: () => void
+}) {
   const [source, setSource] = useState<Source>('local')
+  const [model, setModel] = useState<Model>(QWEN_MODEL)
   const [file, setFile] = useState<File | null>(null)
   const [url, setUrl] = useState('')
   const [rights, setRights] = useState(false)
@@ -76,7 +84,7 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
     setMessage('')
   }
 
-  function upload(selected: File): Promise<TransferResult> {
+  function upload(selected: File, selectedModel: Model): Promise<TransferResult> {
     return new Promise((resolve, reject) => {
       const request = new XMLHttpRequest()
       active.current = request
@@ -85,6 +93,7 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
       request.setRequestHeader('Content-Type', 'application/octet-stream')
       request.setRequestHeader('X-Video-Filename', encodeURIComponent(selected.name))
       request.setRequestHeader('X-Upload-Authorized', 'true')
+      if (selectedModel !== QWEN_MODEL) request.setRequestHeader('X-Video-Model', selectedModel)
       request.setRequestHeader('X-CSRF-Token', csrfToken)
       request.upload.onprogress = (event) => {
         if (mounted.current && event.lengthComputable && event.total > 0) {
@@ -115,20 +124,21 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
         if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('Invalid URL')
       } catch { setError('请输入不含账号密码的 HTTPS 直达视频文件链接。'); return }
     }
+    const selectedModel = deepseekAvailable ? model : QWEN_MODEL
     running.current = true
     setBusy(true)
     setProgress(source === 'local' ? 0 : null)
     try {
       let response: TransferResult
       if (source === 'local' && file) {
-        response = await upload(file)
+        response = await upload(file, selectedModel)
       } else {
         const controller = new AbortController()
         active.current = controller
         const fetched = await fetch('/api/inputs/url', {
           method: 'POST', credentials: 'same-origin', signal: controller.signal,
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-          body: JSON.stringify({ url: url.trim(), rights_confirmed: true }),
+          body: JSON.stringify({ url: url.trim(), rights_confirmed: true, ...(selectedModel !== QWEN_MODEL && { model: selectedModel }) }),
         })
         response = { status: fetched.status, body: await fetched.json().catch(() => null) }
       }
@@ -168,6 +178,14 @@ export default function ImportForm({ csrfToken, onExpired, onImported }: { csrfT
         <button type="button" aria-pressed={source === 'url'} onClick={() => switchSource('url')} disabled={busy}>HTTPS 链接</button>
       </div>
       <form onSubmit={(event) => void submit(event)} aria-busy={busy}>
+        {deepseekAvailable && <div className="field">
+          <label htmlFor="processing-model">处理模型</label>
+          <select id="processing-model" value={model} disabled={busy} onChange={event => setModel(event.target.value === DEEPSEEK_MODEL ? DEEPSEEK_MODEL : QWEN_MODEL)}>
+            <option value={QWEN_MODEL}>Qwen3.8-Omni-Flash（默认）</option>
+            <option value={DEEPSEEK_MODEL}>DeepSeek-V4.1-Flash</option>
+          </select>
+          {model === DEEPSEEK_MODEL && <span className="field-help">音轨用于语音转写，转写文字和关键画面用于生成摘要。</span>}
+        </div>}
         {source === 'local' ? <div className="field"><label htmlFor="video-file">选择视频</label><input ref={input} id="video-file" name="video" type="file" accept=".mp4,.mov" required disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setRights(false) }} aria-describedby="file-help" /><span className="field-help" id="file-help">MP4、MOV；视频 H.264 / AVC，音轨如存在须为 AAC 或 MP3。可用组合以实际校验为准。</span></div> : <div className="field"><label htmlFor="video-url">HTTPS 直达文件链接</label><input id="video-url" name="video-url" type="url" placeholder="https://example.com/video.mp4" required maxLength={8192} autoComplete="off" spellCheck={false} value={url} onChange={(event) => { setUrl(event.target.value); setRights(false) }} disabled={busy} aria-describedby="url-help" /><span className="field-help" id="url-help">仅支持合法直达视频文件，不支持平台播放页、需要登录或绕过访问限制的链接。服务器会先导入私有存储。</span></div>}
         <label className="rights-confirmation"><input type="checkbox" checked={rights} onChange={(event) => setRights(event.target.checked)} disabled={busy} required /><span>我确认拥有上传、导入及处理此视频的合法授权。</span></label>
         {busy && <div className="transfer-status" role="status"><span>{source === 'local' ? progress === 100 ? '上传完成，正在校验并保存视频…' : '正在上传视频…' : '正在导入并校验视频…'}</span>{source === 'local' && progress !== null && progress < 100 ? <><progress value={progress} max={100} aria-label="文件上传进度" /><span>{progress}%</span></> : <progress aria-label="等待导入和校验完成" />}<span className="field-help">任务创建后可在“我的视频任务”中查看处理进度。</span></div>}

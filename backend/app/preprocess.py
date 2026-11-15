@@ -103,7 +103,7 @@ def _finite(value, default=0.0):
         return default
 
 
-def prepare_media(source_path, work_dir, checkpoint=None) -> PreparedMedia:
+def prepare_media(source_path, work_dir, checkpoint=None, *, max_frames=None) -> PreparedMedia:
     """Prepare all tracks on one source-relative timeline; own only a fresh child directory.
 
     Frames are periodic evidence, not proof that every visual event was retained.
@@ -136,15 +136,26 @@ def prepare_media(source_path, work_dir, checkpoint=None) -> PreparedMedia:
         origin = _finite(metadata.get('format', {}).get('start_time'))
         videos = [s for s in metadata.get('streams', []) if s.get('codec_type') == 'video']
         audios = [s for s in metadata.get('streams', []) if s.get('codec_type') == 'audio']
+        multiple_tracks = max_frames is not None and (len(videos) > 1 or len(audios) > 1)
+        if max_frames is not None:
+            videos, audios = videos[:1], audios[:1]
+            interval = max(interval, info.duration_seconds / (max_frames - 1))
+            width = min(width, 768)
         base = [os.getenv('FFMPEG_BIN', 'ffmpeg'), '-nostdin', '-v', 'info', '-xerror',
             '-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov', '-threads', '2']
         # select and showinfo preserve actual selected frame PTS, including non-zero origins.
         filters = []
+        scale = f"scale='min({width},iw)':-2"
+        if max_frames is not None:
+            scale = (f"scale='min({width},iw)':'min({width},ih)':"
+                     "force_original_aspect_ratio=decrease:force_divisible_by=2")
         for index in range(len(videos)):
-            filters.append(f"[0:v:{index}]select='isnan(prev_selected_t)+gte(t-prev_selected_t,{interval})',scale='min({width},iw)':-2,showinfo@v{index}[v{index}]")
+            filters.append(f"[0:v:{index}]select='isnan(prev_selected_t)+gte(t-prev_selected_t,{interval})',{scale},showinfo@v{index}[v{index}]")
         command = base + ['-copyts', '-i', str(source), '-filter_complex_threads', '1', '-filter_complex', ';'.join(filters)]
         for index in range(len(videos)):
-            command += ['-map', f'[v{index}]', '-fps_mode', 'vfr', '-q:v', '3', str(owned / f'frame-{index}-%06d.jpg')]
+            limit = [] if max_frames is None else ['-frames:v', str(max_frames)]
+            command += ['-map', f'[v{index}]', '-fps_mode', 'vfr', '-q:v', '3', *limit,
+                        str(owned / f'frame-{index}-%06d.jpg')]
         extracted = _run(command, checkpoint=checkpoint, capture_output=True, check=True, timeout=timeout)
         timestamps = {i: [] for i in range(len(videos))}
         for line in extracted.stderr.decode('utf-8', errors='replace').splitlines():
@@ -163,27 +174,64 @@ def prepare_media(source_path, work_dir, checkpoint=None) -> PreparedMedia:
             frames.extend(PreparedFrame(path, stamp, index) for path, stamp in zip(paths, stamps))
         frames.sort(key=lambda frame: (frame.timestamp_seconds, frame.track_index))
         audio_tracks = []
+        silent_audio = False
         if audios:
             command = base + ['-i', str(source)]
             starts = []
+            compressed = max_frames is not None
+            extension = 'm4a' if compressed else 'wav'
+            codec = (['-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '48k', '-movflags', '+faststart']
+                     if compressed else ['-c:a', 'pcm_s16le'])
             for index, stream in enumerate(audios):
                 offset = _finite(stream.get('start_time'), origin) - origin
                 start = max(0.0, offset)
                 starts.append(start)
-                command += ['-map', f'0:a:{index}', '-vn', '-af', f'asetpts=PTS-STARTPTS,atrim=start={max(0.0, -offset)}:duration={max(0.0, info.duration_seconds-start)},asetpts=PTS-STARTPTS',
-                    '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(owned / f'audio-{index}.wav')]
-            _run(command, checkpoint=checkpoint, capture_output=True, check=True, timeout=timeout)
+                filters = (f'asetpts=PTS-STARTPTS,atrim=start={max(0.0, -offset)}:'
+                           f'duration={max(0.0, info.duration_seconds-start)},asetpts=PTS-STARTPTS')
+                if compressed:
+                    # Measure the source channels before downmixing and AAC quantization.
+                    filters += ',astats=measure_perchannel=none:measure_overall=Peak_level+RMS_level'
+                    # A source packet can decode to more samples than its container duration.
+                    # Reblock at the AAC frame size and repair only non-increasing PTS.
+                    # Keep the samples and forward timestamps, including gaps.
+                    filters += (",aresample=16000:ochl=mono,asetnsamples=n=1024:p=0,"
+                                "asetpts='if(isnan(PREV_OUTPTS),PTS,max(PTS,PREV_OUTPTS+1))'")
+                command += ['-map', f'0:a:{index}', '-vn', '-af', filters,
+                    '-ac', '1', '-ar', '16000', *codec, str(owned / f'audio-{index}.{extension}')]
+            encoded = _run(command, checkpoint=checkpoint, capture_output=True, check=True, timeout=timeout)
+            if compressed:
+                stats = re.findall(rb'astats[^\r\n]*? (Peak|RMS) level dB: (-inf|-?[0-9.]+)', encoded.stderr)
+                levels = {kind: float(level) for kind, level in stats}
+                # Skip only signals near the digital floor over the entire track.
+                silent_audio = levels.get(b'Peak', 0) <= -85 and levels.get(b'RMS', 0) <= -95
             for index, start in enumerate(starts):
-                path = owned / f'audio-{index}.wav'
-                with wave.open(str(path), 'rb') as audio:
-                    duration = audio.getnframes() / audio.getframerate()
+                path = owned / f'audio-{index}.{extension}'
+                if compressed:
+                    # Stream duration honors the MP4 edit list for AAC priming.
+                    audio = _run([os.getenv('FFPROBE_BIN', 'ffprobe'), '-v', 'error',
+                                  '-show_entries', 'stream=duration', '-of', 'json', str(path)],
+                                 checkpoint=checkpoint, capture_output=True, check=True, timeout=min(120, timeout))
+                    duration = _finite(json.loads(audio.stdout)['streams'][0]['duration'])
+                else:
+                    with wave.open(str(path), 'rb') as audio:
+                        duration = audio.getnframes() / audio.getframerate()
                 if duration <= 0 or start > info.duration_seconds or start + duration > info.duration_seconds + .1:
                     raise PreprocessError('PREPROCESS_TIMELINE')
-                audio_tracks.append(PreparedAudio(path, start, min(info.duration_seconds, start + duration), index))
+                if silent_audio:
+                    path.unlink()
+                else:
+                    audio_tracks.append(PreparedAudio(path, start, min(info.duration_seconds, start + duration), index))
         _checkpoint(checkpoint)
         limitations = [f'视觉证据按约 {interval:g} 秒间隔采样，不能据此声称覆盖所有视觉事件。',
             '音频按源轨道偏移对齐，源时间线之外的编码填充已去除；尚未执行语音识别或模型质量验证。']
-        if not audio_tracks:
+        if max_frames is not None:
+            limitations = ['Visual evidence is sampled at approximately '
+                           f'{interval:g} second intervals; events between frames may be missing.']
+            if multiple_tracks:
+                limitations.append('Only the first video and audio tracks are analyzed.')
+        if silent_audio:
+            limitations.append('The first audio track is near the digital silence floor.')
+        elif not audio_tracks:
             limitations.append('视频无音轨，无可用语音证据。')
         return PreparedMedia(info.duration_seconds, tuple(frames), audio_tracks[0] if audio_tracks else None,
             tuple(audio_tracks), tuple(limitations), directory=owned)

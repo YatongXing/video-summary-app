@@ -68,7 +68,7 @@ def test_active_delete_fences_old_worker_without_refund(cleanup_db):
     from app import cleanup,tasks,queue
     db=cleanup_db;uid,tid,generation=claimed(db)
     cleanup.request_delete(tid,uid)
-    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==2
+    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==0
     assert not queue.heartbeat(tid,generation,'result-test-worker')
     with pytest.raises(HTTPException):publish(tid,generation)
     assert db.execute('SELECT count(*) FROM task_results WHERE task_id=%s',(tid,)).fetchone()[0]==0

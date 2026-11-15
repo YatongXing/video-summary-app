@@ -113,7 +113,7 @@ def test_publish_both_languages_and_success_are_atomic(result_db):
     assert db.execute('SELECT status FROM task_attempts WHERE task_id=%s',(tid,)).fetchone()[0]=='SUCCEEDED'
     assert db.execute('SELECT count(*) FROM task_results WHERE task_id=%s',(tid,)).fetchone()[0]==2
     assert db.execute('SELECT count(*) FROM media_assets WHERE task_id=%s',(tid,)).fetchone()[0]>=2
-    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==2
+    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==0
 
 
 def test_invalid_second_language_does_not_partially_publish(result_db):
@@ -156,6 +156,13 @@ def authenticated(db,c,uid):
 def test_result_export_owner_isolation_and_admin_metadata(result_db):
     db=result_db;uid,tid,gen=claimed(db);publish(tid,gen)
     outsider=identity(db);admin=identity(db,'ADMIN')
+    _,admin_task,admin_generation=claimed(db,admin)
+    db.execute('UPDATE tasks SET duration_seconds=7200 WHERE id=%s',(admin_task,))
+    from app import results
+    english=candidate('en')
+    english['summary']='First paragraph.\n\n<script>example</script>\n1. Plain text'
+    english['chapters'].append({'timestamp_seconds':3723.9,'title':'Q&A\n![example](https://example.invalid)'})
+    results.publish(admin_task,admin_generation,'result-test-worker',{'zh':candidate(),'en':english},synthetic=True)
     async def scenario():
         async with client() as c:
             assert (await c.get(f'/tasks/{tid}/export?language=zh')).status_code==401
@@ -164,6 +171,15 @@ def test_result_export_owner_isolation_and_admin_metadata(result_db):
             assert (await c.get(f'/tasks/{tid}/export?language=en')).status_code in (403,404)
             authenticated(db,c,admin)
             assert (await c.get(f'/tasks/{tid}/result?language=zh')).status_code in (403,404)
+            assert (await c.get(f'/tasks/{tid}/export?language=zh')).status_code in (403,404)
+            assert (await c.get(f'/admin/tasks/{admin_task}/export')).status_code==410
+            admin_download=await c.get(f'/tasks/{admin_task}/export?language=en')
+            assert admin_download.status_code==200
+            assert admin_download.text == (
+                '## Summary\n\nFirst paragraph.\n\n\\<script\\>example\\</script\\>\n1\\. Plain text'
+                '\n\n## Chapters\n\n- 00:00:00 Beginning\n'
+                '- 01:02:03 Q\\&A !\\[example\\](https://example.invalid)\n'
+            )
             metadata=await c.get('/admin/tasks')
             assert metadata.status_code==200
             text=metadata.text
@@ -173,11 +189,17 @@ def test_result_export_owner_isolation_and_admin_metadata(result_db):
             response=await c.get(f'/tasks/{tid}/result?language=en')
             assert response.status_code==200,response.text
             assert response.json()['offline_test'] is True
-            export=await c.get(f'/tasks/{tid}/export?language=en')
-            assert export.status_code==200 and export.json()['language']=='en'
-            assert 'attachment' in export.headers['content-disposition']
-            assert export.headers['cache-control']=='no-store'
-            assert str(uid) not in export.text and str(tid) not in export.text
+            assert response.json()['export']['schema_version']=='1.0'
+            for language, expected in (
+                ('zh','## 摘要\n\n离线替身摘要。\n\n## 章节\n\n- 00:00:00 Beginning\n'),
+                ('en','## Summary\n\nOffline synthetic summary.\n\n## Chapters\n\n- 00:00:00 Beginning\n'),
+            ):
+                export=await c.get(f'/tasks/{tid}/export?language={language}')
+                assert export.status_code==200
+                assert export.text==expected
+                assert export.headers['content-type']=='text/markdown; charset=utf-8'
+                assert export.headers['content-disposition']==f'attachment; filename="video-summary-{language}.md"'
+                assert export.headers['cache-control']=='no-store'
             assert (await c.get(f'/tasks/{tid}/export?language=fr')).status_code==422
             db.execute('UPDATE tasks SET deletion_requested_at=now() WHERE id=%s',(tid,))
             assert (await c.get(f'/tasks/{tid}/export?language=en')).status_code in (403,404)
@@ -227,7 +249,7 @@ def test_pipeline_invalid_second_language_fails_refunds_once_and_cannot_download
     context=WorkerContext({'id':str(tid),'generation':gen},'result-test-worker')
     with pytest.raises(results.OutputError):pipeline.run_pipeline(context)
     assert db.execute('SELECT status,failure_category,failure_code FROM tasks WHERE id=%s',(tid,)).fetchone()==('FAILED','INTERNAL','OUTPUT_INVALID')
-    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==3
+    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==1
     assert db.execute("SELECT count(*) FROM quota_events WHERE task_id=%s AND event_type='REFUND'",(tid,)).fetchone()[0]==1
     context.fail('INTERNAL','OUTPUT_INVALID')
     assert db.execute("SELECT count(*) FROM quota_events WHERE task_id=%s AND event_type='REFUND'",(tid,)).fetchone()[0]==1
@@ -266,7 +288,7 @@ def test_pipeline_cancellation_before_publication_prevents_results(result_db,mon
     with pytest.raises(processing.ProcessingCancelled):pipeline.run_pipeline(context)
     assert db.execute('SELECT status FROM tasks WHERE id=%s',(tid,)).fetchone()[0]=='CANCELLED'
     assert db.execute('SELECT count(*) FROM task_results').fetchone()[0]==0
-    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==2
+    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==0
 
 
 def test_queue_processing_times_and_target_have_honest_semantics(result_db,monkeypatch):

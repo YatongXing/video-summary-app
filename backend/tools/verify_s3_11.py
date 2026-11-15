@@ -47,8 +47,8 @@ assert row['status']=='SUCCEEDED',row.get('failure_code')
 for language in ('zh','en'):
     result=json.loads(request(f"/api/tasks/{task['id']}/result?language={language}",200))
     assert result['language']==language and result['offline_test'] is False
-    export=json.loads(request(f"/api/tasks/{task['id']}/export?language={language}",200))
-    assert export['summary']
+    export=request(f"/api/tasks/{task['id']}/export?language={language}",200).decode('utf-8')
+    assert export.startswith('## ') and '- 00:00:00 ' in export
 assert len(request(f"/api/tasks/{task['id']}/video",206,additional={'Range':'bytes=0-29'}))==30
 print(json.dumps({'task':task['id'],'uploaded_has_audio':True,'published_languages':['zh','en'],'range':206}))
 """

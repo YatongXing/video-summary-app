@@ -23,6 +23,13 @@ class AudioEvidence:
     media_type: str = 'audio/wav'
 
 @dataclass(frozen=True)
+class TranscriptSegment:
+    start_seconds: float
+    end_seconds: float
+    text: str = field(repr=False)
+
+
+@dataclass(frozen=True)
 class ModelRequest:
     duration_seconds: float
     frames: tuple[VisualEvidence, ...]
@@ -34,6 +41,7 @@ class ModelRequest:
     open_video: Callable[[], BinaryIO] | None = field(default=None, repr=False)
     video_url: str | None = field(default=None, repr=False)
     task_id: str | None = None
+    transcript: tuple[TranscriptSegment, ...] = field(default=(), repr=False)
 
     @property
     def audio(self):
@@ -67,9 +75,9 @@ class ModelResponse:
 class AdapterError(Exception):
     CATEGORIES = {'timeout':'EXTERNAL_TIMEOUT', 'rate_limit':'EXTERNAL_RATE_LIMIT',
                   'unavailable':'EXTERNAL_UNAVAILABLE', 'input':'USER_INPUT',
-                  'invalid_response':'INTERNAL', 'internal':'INTERNAL', 'cancelled':'INTERNAL',
+                  'invalid_response':'INTERNAL', 'output_truncated':'INTERNAL', 'internal':'INTERNAL', 'cancelled':'INTERNAL',
                   'inline_video_too_large':'USER_INPUT', 'auth':'EXTERNAL_UNAVAILABLE',
-                  'cloud_transfer':'EXTERNAL_UNAVAILABLE'}
+                  'cloud_transfer':'EXTERNAL_UNAVAILABLE', 'evidence_budget':'INTERNAL'}
     def __init__(self, kind='internal', request_id=None, usage=None):
         self.kind = kind if kind in self.CATEGORIES else 'internal'
         self.request_id = request_id

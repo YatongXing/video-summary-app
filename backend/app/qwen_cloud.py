@@ -12,6 +12,8 @@ from app.model_adapter import AdapterError
 
 
 PREFIX = 'vsa-qwen/'
+AUDIO_PREFIX = f'{PREFIX}asr/'
+AUDIO_KIND = 'ASR_AUDIO_TRANSFER'
 URL_TTL = timedelta(minutes=15)
 ENV_NAMES = ('QWEN_OSS_REGION', 'QWEN_OSS_BUCKET', 'QWEN_OSS_ACCESS_KEY_ID', 'QWEN_OSS_ACCESS_KEY_SECRET')
 
@@ -78,6 +80,9 @@ class CloudVideoStore:
         extension = 'mov' if (filename or '').lower().endswith('.mov') else 'mp4'
         return f'{PREFIX}{task_id}/{uuid4().hex}.{extension}'
 
+    def audio_asset_key(self, task_id):
+        return f'{AUDIO_PREFIX}{task_id}/{uuid4().hex}.wav'
+
     def upload(self, path, key, checkpoint):
         last_check = time.monotonic()
         deadline = last_check + 1800
@@ -91,10 +96,13 @@ class CloudVideoStore:
                 checkpoint()
                 last_check = now
 
+        content_type = 'video/quicktime' if key.endswith('.mov') else 'video/mp4'
+        if key.startswith(AUDIO_PREFIX) and key.endswith('.wav'):
+            content_type = 'audio/wav'
         checkpoint()
         self.client.put_object_from_file(self.oss.PutObjectRequest(
             bucket=self.bucket, key=key, content_length=path.stat().st_size, acl='private',
-            content_type='video/quicktime' if key.endswith('.mov') else 'video/mp4',
+            content_type=content_type,
             progress_fn=progress,
         ), str(path))
         checkpoint()
@@ -104,23 +112,28 @@ class CloudVideoStore:
             raise AdapterError('cloud_transfer')
         return url
 
-    def remove(self, asset):
+    def remove(self, asset, checkpoint=None):
         key = asset['storage_key']
-        prefix = f"{PREFIX}{asset['task_id']}/"
+        audio = asset.get('asset_kind') == AUDIO_KIND
+        prefix = f"{AUDIO_PREFIX if audio else PREFIX}{asset['task_id']}/"
+        suffix = r'[0-9a-f]{32}\.wav' if audio else r'[0-9a-f]{32}\.(mp4|mov)'
         if (asset['storage_backend'] != self.backend or asset['storage_bucket'] != self.bucket
                 or asset['storage_version'] or not key.startswith(prefix)
-                or not re.fullmatch(r'[0-9a-f]{32}\.(mp4|mov)', key[len(prefix):])):
+                or not re.fullmatch(suffix, key[len(prefix):])):
             raise ValueError('OSS cleanup locator does not match its task and bucket')
+        checkpoint = checkpoint or maintenance.ensure_open
+        checkpoint()
         self._unversioned()
-        maintenance.ensure_open()
+        checkpoint()
         self.client.delete_object(self.oss.DeleteObjectRequest(bucket=self.bucket, key=key))
-        maintenance.ensure_open()
+        checkpoint()
         try:
             self.client.head_object(self.oss.HeadObjectRequest(bucket=self.bucket, key=key))
         except self.oss.exceptions.OperationError as error:
             service_error = error.unwrap()
             if (isinstance(service_error, self.oss.exceptions.ServiceError)
                     and service_error.status_code == 404 and service_error.code != 'NoSuchBucket'):
+                checkpoint()
                 self._unversioned()  # A missing bucket is not confirmation that a key was deleted.
                 return
             raise

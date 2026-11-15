@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.concurrency import run_in_threadpool
 from app.auth import Principal, connect, mutation_user
 from app import media, safe_download, object_store
+from app.model_selection import QWEN_MODEL, validate_choice
 router=APIRouter()
 
 def staging_dir():
@@ -114,7 +115,7 @@ def safe_filename(value):
     name=''.join(c for c in name if c.isprintable()).strip().strip('.')[:255]
     return name or 'video'
 
-def finish_import(user,identifier,key,path,info,name,cancelled):
+def finish_import(user,identifier,key,path,info,name,cancelled,*,requested_model=QWEN_MODEL):
     maintenance.ensure_open()
     if cancelled.is_set(): raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
     with connect() as connection:
@@ -133,20 +134,21 @@ def finish_import(user,identifier,key,path,info,name,cancelled):
             if ledger is None: raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
             active_session(connection,user)
             if cancelled.is_set(): raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
-            row=connection.execute('''INSERT INTO tasks(user_id,input_kind,display_filename,duration_seconds,submitted_at)
-                VALUES (%s,%s,%s,%s,clock_timestamp()) RETURNING id,status''',(user.id,info['input_kind'],name,info['media'].duration_seconds)).fetchone()
+            row=connection.execute('''INSERT INTO tasks(user_id,input_kind,display_filename,duration_seconds,requested_model,submitted_at)
+                VALUES (%s,%s,%s,%s,%s,clock_timestamp()) RETURNING id,status,requested_model''',
+                (user.id,info['input_kind'],name,info['media'].duration_seconds,requested_model)).fetchone()
             connection.execute('''INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key,byte_size,has_audio,storage_backend,storage_bucket,storage_version)
                 VALUES (%s,%s,'ORIGINAL',%s,%s,%s,%s,%s,%s)''',(row['id'],user.id,key,path.stat().st_size,info['media'].has_audio,ledger['storage_backend'],ledger['storage_bucket'],ledger['storage_version']))
             connection.execute('DELETE FROM input_imports WHERE id=%s',(identifier,))
             maintenance.ensure_open()
         try: path.unlink(missing_ok=True)
         except OSError: pass
-        return {'id':str(row['id']),'status':row['status'],'filename':name,'duration_seconds':info['media'].duration_seconds,'has_audio':info['media'].has_audio}
+        return {'id':str(row['id']),'status':row['status'],'filename':name,'duration_seconds':info['media'].duration_seconds,'has_audio':info['media'].has_audio,'requested_model':row['requested_model']}
     except BaseException:
         cleanup_import(identifier,key,path,True)
         raise
 
-async def validate_and_finish(request,user,identifier,key,path,input_kind,filename):
+async def validate_and_finish(request,user,identifier,key,path,input_kind,filename,requested_model):
     maintenance.ensure_open()
     cancelled=threading.Event()
     async def watch():
@@ -161,7 +163,7 @@ async def validate_and_finish(request,user,identifier,key,path,input_kind,filena
     try:
         info=await run_in_threadpool(media.validate_media,path)
         if await request.is_disconnected(): cancelled.set()
-        finishing=asyncio.create_task(run_in_threadpool(finish_import,user,identifier,key,path,{'input_kind':input_kind,'media':info},filename or f'imported-video.{info.container}',cancelled))
+        finishing=asyncio.create_task(run_in_threadpool(finish_import,user,identifier,key,path,{'input_kind':input_kind,'media':info},filename or f'imported-video.{info.container}',cancelled,requested_model=requested_model))
         try:
             return await asyncio.shield(finishing)
         except BaseException:
@@ -181,6 +183,7 @@ async def validate_and_finish(request,user,identifier,key,path,input_kind,filena
 async def upload(request:Request,user:Principal=Depends(mutation_user)):
     maintenance.ensure_open()
     if request.headers.get('x-upload-authorized')!='true': raise media.InputError('RIGHTS_REQUIRED','请先确认拥有上传和处理授权。',400)
+    requested_model=validate_choice(request.headers.get('x-video-model'))
     filename=safe_filename(request.headers.get('x-video-filename','video'))
     length=request.headers.get('content-length')
     if length:
@@ -203,7 +206,7 @@ async def upload(request:Request,user:Principal=Depends(mutation_user)):
                         target.write(chunk)
                         maintenance.ensure_open()
             if length is not None and total!=int(length): raise media.InputError('INVALID_MEDIA','视频上传不完整。')
-            return await validate_and_finish(request,user,identifier,key,path,'LOCAL',filename)
+            return await validate_and_finish(request,user,identifier,key,path,'LOCAL',filename,requested_model)
         except BaseException as error:
             cleanup_import(identifier,key,path,False)
             if isinstance(error, media.InputError): raise
@@ -215,18 +218,20 @@ class URLInput(BaseModel):
     model_config=ConfigDict(extra='forbid')
     url:str=Field(min_length=1,max_length=4096)
     rights_confirmed:StrictBool
+    model:str=QWEN_MODEL
 
 @router.post('/inputs/url',status_code=201)
 async def import_url(data:URLInput,request:Request,user:Principal=Depends(mutation_user)):
     maintenance.ensure_open()
     if data.rights_confirmed is not True: raise media.InputError('RIGHTS_REQUIRED','请先确认拥有导入和处理授权。',400)
+    requested_model=validate_choice(data.model)
     safe_download.validate_url(data.url)
     identifier,key,path=begin_import(user)
     from app.task_locks import producer
     with producer('import-'+str(identifier)):
         try:
             await run_in_threadpool(safe_download.download_video,data.url,path,media.MAX_BYTES)
-            return await validate_and_finish(request,user,identifier,key,path,'URL',None)
+            return await validate_and_finish(request,user,identifier,key,path,'URL',None,requested_model)
         except BaseException as error:
             cleanup_import(identifier,key,path,False)
             if isinstance(error, media.InputError): raise

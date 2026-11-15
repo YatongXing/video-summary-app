@@ -50,28 +50,55 @@ def test_fifo_user_and_task_ties_and_admin_no_priority(db,clock):
     late=task(db,b,clock[0],UUID(int=3)); second=task(db,a,clock[0],UUID(int=2));first=task(db,a,clock[0],UUID(int=1))
     r=queue.claim_next('one');assert r['id']==str(first)
     tasks.succeed_task(first,r['generation'])
+    clock[0]+=timedelta(hours=6)
     r=queue.claim_next('two');assert r['id']==str(second)
     tasks.succeed_task(second,r['generation'])
     assert queue.claim_next('three')['id']==str(late)
 
 
-def test_only_active_user_can_be_bypassed_and_oldest_runs_when_free(db,clock):
+@pytest.mark.parametrize('reason', ['USER_ACTIVE', 'NO_CREDITS', 'USER_ACTIVE_AND_NO_CREDITS'])
+def test_approved_bypass_preserves_user_order_and_restores_fifo(db,clock,monkeypatch,reason):
     from app import queue,tasks
-    a=user(db); b=user(db); active=task(db,a,clock[0]-timedelta(seconds=2))
-    running=tasks.start_task(active,'active')
-    first=task(db,a,clock[0]);second=task(db,a,clock[0]+timedelta(seconds=1));other=task(db,b,clock[0]+timedelta(seconds=2))
-    r=queue.claim_next('other');assert r['id']==str(other)
-    tasks.succeed_task(active,running['generation'])
-    r=queue.claim_next('oldest');assert r['id']==str(first)
-    assert db.execute('SELECT status FROM tasks WHERE id=%s',(second,)).fetchone()[0]=='QUEUED'
+    monkeypatch.setenv('WORKER_LEASE_SECONDS','86400')
+    a, b, c = user(db), user(db), user(db, 'ADMIN')
+    active = task(db, a, clock[0] - timedelta(seconds=3))
+    running = tasks.start_task(active, 'active')
+    first = task(db, a, clock[0])
+    second = task(db, a, clock[0] + timedelta(seconds=1))
+    # A retry with an existing spend could run on zero credits, but cannot overtake its own head.
+    db.execute(
+        "INSERT INTO quota_events(user_id,task_id,event_key,event_type,delta) VALUES (%s,%s,%s,'SPEND',-1)",
+        (a, second, f'spend:{second}'),
+    )
+    if reason == 'NO_CREDITS':
+        tasks.succeed_task(active, running['generation'])
+    if reason == 'USER_ACTIVE':
+        clock[0] += timedelta(hours=6)
+    other = task(db, b, clock[0] + timedelta(seconds=2))
+    tail = task(db, c, clock[0] + timedelta(seconds=3))
+    assert queue.claim_next('other')['id'] == str(other)
+    assert db.execute(
+        "SELECT reason_code,related_task_id FROM schedule_events WHERE event_type='BYPASS' AND task_id=%s",
+        (first,),
+    ).fetchall() == [(reason, other)]
+    assert db.execute(
+        "SELECT reason_code FROM schedule_events WHERE event_type='CLAIM' AND task_id=%s", (other,)
+    ).fetchone()[0] == reason + '_BYPASS'
+    assert db.execute('SELECT status FROM tasks WHERE id=%s', (second,)).fetchone()[0] == 'QUEUED'
+    if reason != 'NO_CREDITS':
+        tasks.succeed_task(active, running['generation'])
+    if reason != 'USER_ACTIVE':
+        clock[0] += timedelta(hours=6)
+    assert queue.claim_next('oldest')['id'] == str(first)
+    assert db.execute('SELECT status FROM tasks WHERE id=%s', (tail,)).fetchone()[0] == 'QUEUED'
 
 
-@pytest.mark.parametrize('reason',['cooldown','no_credits','disabled'])
+@pytest.mark.parametrize('reason',['cooldown','retry_wait','disabled'])
 def test_nonconcurrency_head_blocker_never_skipped(db,clock,reason):
     from app import queue
     a=user(db);b=user(db);head=task(db,a,clock[0]);tail=task(db,b,clock[0]+timedelta(seconds=1))
     if reason=='cooldown':db.execute('UPDATE tasks SET cooldown_until=%s WHERE id=%s',(clock[0]+timedelta(minutes=1),head))
-    if reason=='no_credits':db.execute('UPDATE users SET credits_available=0,recovery_started_at=%s WHERE id=%s',(clock[0],a))
+    if reason=='retry_wait':db.execute('UPDATE tasks SET next_retry_at=%s WHERE id=%s',(clock[0]+timedelta(minutes=1),head))
     if reason=='disabled':db.execute('UPDATE users SET disabled_at=now() WHERE id=%s',(a,))
     assert queue.claim_next('blocked') is None
     assert db.execute('SELECT status FROM tasks WHERE id=%s',(tail,)).fetchone()[0]=='QUEUED'
@@ -88,11 +115,18 @@ def test_multiple_blockers_do_not_qualify_for_bypass(db,clock):
 def test_concurrent_claims_enforce_global_cap_and_spend_once(db,clock,monkeypatch):
     from app import queue
     monkeypatch.setenv('QUEUE_GLOBAL_CONCURRENCY','2')
-    for _ in range(6):task(db,user(db))
+    owner = user(db)
+    db.execute('UPDATE users SET credits_available=0,recovery_started_at=%s WHERE id=%s', (clock[0], owner))
+    head = task(db, owner, clock[0] - timedelta(seconds=1))
+    for _ in range(6):task(db,user(db),clock[0])
     with ThreadPoolExecutor(max_workers=6) as pool:results=list(pool.map(lambda n:queue.claim_next('w'+str(n)),range(6)))
     claimed=[r for r in results if r]
     assert len(claimed)==2 and len({r['id'] for r in claimed})==2
     assert events(db,'SPEND')==2
+    assert db.execute(
+        "SELECT count(DISTINCT related_task_id) FROM schedule_events WHERE task_id=%s AND event_type='BYPASS' AND reason_code='NO_CREDITS'",
+        (head,),
+    ).fetchone()[0] == 2
     assert db.execute("SELECT count(*) FROM tasks WHERE status='PROCESSING'").fetchone()[0]==2
 
 
@@ -115,7 +149,7 @@ def test_lease_expiry_refunds_once_and_old_worker_is_fenced(db,clock):
     with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(lambda _:queue.recover_expired(),range(2)))
     assert db.execute('SELECT status,failure_category FROM tasks WHERE id=%s',(tid,)).fetchone()==('FAILED','INTERNAL')
     assert events(db,'REFUND')==1
-    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==3
+    assert db.execute('SELECT credits_available FROM users WHERE id=%s',(uid,)).fetchone()[0]==1
     tasks.request_retry(tid,uid,uuid4())
     new=queue.claim_next('new');assert new['generation']>gen
     assert events(db,'SPEND')==1
@@ -133,16 +167,20 @@ def test_heartbeat_renews_and_cancel_or_delete_rejects_writes(db,clock):
     tasks.cancel_task(tid,uid)
     assert queue.heartbeat(tid,gen,'worker') is False
     with pytest.raises(HTTPException):queue.fenced_write(tid,gen,'worker',lambda c,t:None)
+    clock[0]+=timedelta(hours=6)
     second=task(db,uid);r=queue.claim_next('second')
     db.execute('UPDATE tasks SET deletion_requested_at=now() WHERE id=%s',(second,))
     assert queue.heartbeat(second,r['generation'],'second') is False
     with pytest.raises(HTTPException):queue.fenced_write(second,r['generation'],'second',lambda c,t:None)
 
 
-def test_schedule_audit_records_bypass_and_sort_keys(db,clock):
+def test_schedule_audit_records_bypass_and_sort_keys(db,clock,monkeypatch):
     from app import queue,tasks
+    monkeypatch.setenv('WORKER_LEASE_SECONDS','86400')
     a=user(db);b=user(db);active=task(db,a,clock[0]-timedelta(seconds=1));tasks.start_task(active,'active')
-    blocked=task(db,a,clock[0]);chosen=task(db,b,clock[0]+timedelta(seconds=1));queue.claim_next('next')
+    blocked=task(db,a,clock[0]);chosen=task(db,b,clock[0]+timedelta(seconds=1))
+    clock[0]+=timedelta(hours=6)
+    assert queue.claim_next('next')['id']==str(chosen)
     columns={r[0] for r in db.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='schedule_events'")}
     assert 'created_at' in columns and ('task_id' in columns or 'selected_task_id' in columns)
     rows=db.execute('SELECT row_to_json(s)::text FROM schedule_events s').fetchall()

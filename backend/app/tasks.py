@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 import re
 from uuid import UUID
 from fastapi import HTTPException
+from app.model_selection import DEEPSEEK_MODEL, deepseek_enabled
 
 def connect():
     """Bound task/Worker database waits without replacing DSN search_path options."""
@@ -21,6 +22,7 @@ def connect():
         raise
     return connection
 
+USER_CREDIT_LIMIT = 1
 SIX_HOURS = timedelta(hours=6)
 REFUNDABLE = {'INTERNAL','EXTERNAL_TIMEOUT','EXTERNAL_RATE_LIMIT','EXTERNAL_UNAVAILABLE','UNKNOWN'}
 CATEGORIES = REFUNDABLE | {'USER_INPUT','USER_CANCELLED'}
@@ -53,18 +55,19 @@ def _save_user(c,u,now):
 
 def _recover(c,u,now):
     if u['role']=='ADMIN': return
-    if u['credits_available']>=3:
+    if u['credits_available']>=USER_CREDIT_LIMIT:
+        u['credits_available']=USER_CREDIT_LIMIT
         u['recovery_started_at']=None
     elif u['recovery_started_at'] is None:
         u['recovery_started_at']=now
     else:
         anchor=u['recovery_started_at']
         due=max(0,int((now-anchor)//SIX_HOURS))
-        for step in range(1,min(due,3-u['credits_available'])+1):
+        for step in range(1,min(due,USER_CREDIT_LIMIT-u['credits_available'])+1):
             boundary=anchor+SIX_HOURS*step
             inserted=c.execute("INSERT INTO quota_events(user_id,event_key,event_type,delta,created_at) VALUES (%s,%s,'RECOVER',1,%s) ON CONFLICT DO NOTHING RETURNING id",(u['id'],f"recover:{u['id']}:{boundary.isoformat()}",boundary)).fetchone()
             if inserted: u['credits_available']+=1
-        if u['credits_available']==3: u['recovery_started_at']=None
+        if u['credits_available']==USER_CREDIT_LIMIT: u['recovery_started_at']=None
         elif due: u['recovery_started_at']=anchor+SIX_HOURS*due
     _save_user(c,u,now)
 
@@ -83,14 +86,25 @@ def quota(user_id):
 def _audit(c,t,reason,result,now):
     c.execute("INSERT INTO audit_events(target_user_id,task_id,event_type,reason_code,result,retention_class,created_at) VALUES (%s,%s,'TASK_STATE',%s,%s,'TASK_30D',%s)",(t['user_id'],t['id'],reason,result,now))
 
+def _deepseek_retry_reason(c, task):
+    if task['requested_model'] != DEEPSEEK_MODEL:
+        return None
+    if not deepseek_enabled():
+        return 'MODEL_DISABLED'
+    pending = c.execute('''SELECT 1 FROM model_calls WHERE task_id=%s AND user_id=%s
+        AND deepseek_phase IN ('ASR_SUBMITTING','ASR_WAITING','SUMMARY_SUBMITTING') LIMIT 1''',
+        (task['id'],task['user_id'])).fetchone()
+    return 'MODEL_REQUEST_UNCONFIRMED' if pending else None
+
+
 def _metadata(c,t,u,now):
     cooldown=max(0,math.ceil((t['cooldown_until']-now).total_seconds())) if t['cooldown_until'] else 0
-    reason='TERMINAL' if t['status'] in ('SUCCEEDED','CANCELLED') else 'NOT_FAILED' if t['status']!='FAILED' else 'RETRY_LIMIT' if t['retry_count']>=20 else 'COOLDOWN' if cooldown else None
+    reason='TERMINAL' if t['status'] in ('SUCCEEDED','CANCELLED') else 'NOT_FAILED' if t['status']!='FAILED' else 'RETRY_LIMIT' if t['retry_count']>=20 else 'COOLDOWN' if cooldown else _deepseek_retry_reason(c,t)
     events={r['event_type'] for r in c.execute('SELECT event_type FROM quota_events WHERE task_id=%s',(t['id'],)).fetchall()}
     latest_retry=c.execute('SELECT max(accepted_at) AS at FROM retry_events WHERE task_id=%s',(t['id'],)).fetchone()['at']
     queued_at=max(t['submitted_at'],latest_retry) if latest_retry else t['submitted_at']
     refund='UNLIMITED' if u['role']=='ADMIN' else 'REFUNDED' if 'REFUND' in events else 'CHARGED' if 'SPEND' in events else 'NOT_CHARGED'
-    return {'id':str(t['id']),'status':t['status'],'filename':t['display_filename'],
+    return {'id':str(t['id']),'status':t['status'],'filename':t['display_filename'],'requested_model':t['requested_model'],
             'created_at':t['created_at'],'submitted_at':t['submitted_at'],'started_at':t['started_at'],'finished_at':t['finished_at'],
             'retry_count':t['retry_count'],'cooldown_seconds':cooldown,'retry_allowed':reason is None,'retry_reason':reason,
             'failure_category':t['failure_category'],'failure_code':t['failure_code'],'refund_status':refund,
@@ -149,6 +163,11 @@ def request_retry(task_id,user_id,request_key,source='USER'):
         if t['retry_count']>=20: raise HTTPException(409,'已达到累计 20 次重试上限。')
         if t['cooldown_until'] and now<t['cooldown_until']: raise HTTPException(429,'任务正在冷却，请稍后重试。')
         if t['status']!='FAILED': raise HTTPException(409,'当前任务状态不允许重试。')
+        reason = _deepseek_retry_reason(c,t)
+        if reason == 'MODEL_DISABLED':
+            raise HTTPException(409,'此任务的处理模型暂未启用。')
+        if reason == 'MODEL_REQUEST_UNCONFIRMED':
+            raise HTTPException(409,'上次模型调用状态未确认，请联系管理员核对后再重试。')
         # Rolling window is (now - 5 minutes, now]; exactly five minutes old expires.
         count=c.execute('SELECT count(*) AS n FROM retry_events WHERE task_id=%s AND accepted_at>%s AND accepted_at<=%s',(task_id,now-timedelta(minutes=5),now)).fetchone()['n']
         triggered=count>=4
@@ -229,8 +248,8 @@ def _finish_locked(c,u,t,now,category=None,failure_code=None):
         if spent:
             inserted=c.execute("INSERT INTO quota_events(user_id,task_id,event_key,event_type,delta,created_at) VALUES (%s,%s,%s,'REFUND',1,%s) ON CONFLICT DO NOTHING RETURNING id",(u['id'],task_id,f'refund:{task_id}',now)).fetchone()
             if inserted:
-                u['credits_available']=min(3,u['credits_available']+1)
-                if u['credits_available']==3:u['recovery_started_at']=None
+                u['credits_available']=min(USER_CREDIT_LIMIT,u['credits_available']+1)
+                if u['credits_available']==USER_CREDIT_LIMIT:u['recovery_started_at']=None
                 _save_user(c,u,now)
     c.execute('UPDATE tasks SET status=%s,failure_category=%s,failure_code=%s,finished_at=%s,lease_owner=NULL,lease_expires_at=NULL WHERE id=%s',(status,category,code,now,task_id))
     c.execute("UPDATE task_attempts SET status=%s,failure_category=%s,failure_code=%s,finished_at=%s WHERE task_id=%s AND lease_generation=%s AND status='PROCESSING'",(status,category,code,now,task_id,generation))

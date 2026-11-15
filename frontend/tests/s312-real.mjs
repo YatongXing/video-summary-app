@@ -1,7 +1,7 @@
 // Exercise the shipped frontend through its normal browser entry point.
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -24,6 +24,7 @@ const child = spawn(browser, [
 ], { windowsHide: true, stdio: 'ignore' })
 let socket, nextId = 0
 const pending = new Map()
+const browserErrors = []
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 async function waitFor(condition, label, ms = 30000) {
@@ -46,6 +47,9 @@ try {
     if (pending.has(message.id)) {
       pending.get(message.id)(message)
       pending.delete(message.id)
+    } else if (message.method === 'Runtime.exceptionThrown' ||
+               (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error')) {
+      browserErrors.push(message)
     }
   }
   const command = (method, params = {}) => new Promise((resolve, reject) => {
@@ -74,7 +78,17 @@ try {
     await run(`(${button}).click()`)
   }
 
+  async function screenshot(name) {
+    if (!process.env.UI_TEST_EVIDENCE) return
+    const { data } = await command('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(resolve(process.env.UI_TEST_EVIDENCE, (process.env.S312_FIXTURE_MODE || 'inline') + '-' + name + '.png'), Buffer.from(data, 'base64'))
+  }
+
   await command('Page.enable')
+  await command('Runtime.enable')
+  await command('Emulation.setDeviceMetricsOverride', { width: 1100, height: 900, deviceScaleFactor: 1, mobile: false })
+  const downloadPath = join(profile, 'downloads')
+  await command('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath })
   await command('Page.addScriptToEvaluateOnNewDocument', { source: `
     window.confirm = () => true;
     const original = XMLHttpRequest.prototype.open;
@@ -87,6 +101,8 @@ try {
     };` })
   await command('Page.navigate', { url: origin })
   await wait('document.querySelector("#email")&&!document.querySelector(".checking")')
+  await wait('document.querySelector(".feedback-footer a")?.getAttribute("href")==="mailto:feedback+s312@example.invalid"')
+  await screenshot('feedback')
   const account = { email: 'fixture@s312.invalid', password: 'S312-Synthetic-Only-Password!' }
   assert.equal(await run(`fetch('/api/auth/register',{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(${JSON.stringify(account)})
@@ -95,6 +111,15 @@ try {
   await input('#password', account.password)
   await click('登录', 'document.querySelector("form")')
   await wait('document.querySelector("#video-file")')
+  await wait('document.querySelector(".quota-card")?.textContent.includes("1 / 1")')
+  assert(!await run('document.body.textContent.includes("当前为离线流程验证模式")'))
+  const deepseek = process.env.S312_FIXTURE_MODE === 'deepseek'
+  if (deepseek) {
+    await wait('document.querySelector("#processing-model")?.value==="qwen3.8-omni-flash"')
+    await run("(() => { const field = document.querySelector('#processing-model'); field.value = 'deepseek-v4.1-flash'; field.dispatchEvent(new Event('change', {bubbles:true})); })()")
+    await wait('document.querySelector("#processing-model")?.value==="deepseek-v4.1-flash"')
+    await screenshot('model-picker')
+  }
   const scope = 'document.querySelector("[aria-labelledby=tasks-title]")'
   const card = id => `Array.from(${scope}.querySelectorAll('.task-card')).find(e=>e.querySelector('code.identifier')?.textContent===${JSON.stringify(id)})`
   async function upload() {
@@ -106,6 +131,8 @@ try {
     await click('导入并校验', 'document.querySelector(".import-section")')
     await wait('window.s312Receipt?.status==="QUEUED"&&document.querySelector(".import-success")?.textContent.includes("导入成功")')
     const id = await run('window.s312Receipt.id')
+    assert.equal(await run('window.s312Receipt.requested_model'),
+      deepseek ? 'deepseek-v4.1-flash' : 'qwen3.8-omni-flash')
     assert.match(id, /^[a-f0-9-]{36}$/)
     return id
   }
@@ -121,17 +148,44 @@ try {
   assert(await run(`${player}.duration>5`))
   await run(`(()=>{const video=${player};video.pause();video.currentTime=5})()`)
   await wait(`!${player}.seeking&&${player}.currentTime>=4.9`)
+  assert.deepEqual(await run('Array.from(document.querySelectorAll(".result-panel h3"), h=>h.textContent)'), ['摘要','章节'])
+  await click('0:00', 'document.querySelector(".result-panel .timeline")')
+  await wait(`!${player}.seeking&&${player}.currentTime<.1`)
+  await run('document.querySelector(".result-panel").scrollIntoView({block:"center"})')
+  await screenshot('summary-zh')
+  async function download(language) {
+    await click('下载 Markdown', 'document.querySelector(".result-panel")')
+    const file = join(downloadPath, `video-summary-${language}.md`)
+    await waitFor(() => existsSync(file), `download in ${language}`)
+    return readFileSync(file, 'utf8')
+  }
+  const chineseExport = await download('zh')
   await run(`(()=>{
     const select=document.querySelector('.result-toolbar select');
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'en');
     select.dispatchEvent(new Event('change',{bubbles:true}));
   })()`)
   await wait('document.querySelector(".summary-text")?.textContent.includes("Blue picture")')
+  await screenshot('summary-en')
+  const englishExport = await download('en')
   const range = await run(`fetch('/api/tasks/${succeeded}/video',{headers:{Range:'bytes=0-29'}})
     .then(async r=>[r.status,(await r.arrayBuffer()).byteLength])`)
   assert.deepEqual(range, [206, 30])
-  assert.equal(await run(`fetch('/api/tasks/${succeeded}/export?language=en')
-    .then(r=>r.headers.get('content-disposition'))`), 'attachment; filename="video-summary-en.json"')
+  for (const language of ['zh', 'en']) {
+    const [header, body] = await run(`fetch('/api/tasks/${succeeded}/export?language=${language}')
+      .then(async r=>[r.headers.get('content-disposition'),await r.text()])`)
+    assert.equal(header, `attachment; filename="video-summary-${language}.md"`)
+    assert.equal(body, language === 'zh' ? chineseExport : englishExport)
+    const expected = language === 'zh' ? ['摘要', '蓝色画面', '章节'] : ['Summary', 'Blue picture', 'Chapters']
+    assert(body.startsWith('## '+expected[0]+'\n\n') && body.includes(expected[1]))
+    assert.deepEqual(body.match(/^## .+$/gm), ['## '+expected[0], '## '+expected[2]])
+    assert.match(body, /\n- 00:00:00 .+\n/)
+    assert(body.split('\n\n## '+expected[2]+'\n\n')[1].trimEnd().split('\n').every(
+      line => /^- \d{2}:\d{2}:\d{2} .+$/.test(line)))
+    if (process.env.UI_TEST_EVIDENCE) {
+      writeFileSync(resolve(process.env.UI_TEST_EVIDENCE, 'video-summary-'+language+'.md'), body, 'utf8')
+    }
+  }
 
   const other = { ...account, email: 'other@s312.invalid' }
   const auth = route => fetch(origin + '/api/auth/' + route, {
@@ -149,6 +203,13 @@ try {
   }
   assert.equal((await fetch(origin + '/api/admin/tasks', { headers: { Cookie: cookie } })).status, 403)
 
+  await wait('document.querySelector(".quota-card")?.textContent.includes("0 / 1")')
+  // Advance the recovery anchor in this disposable database so the same user can start another task.
+  await shell('docker', ['--context', context, 'exec', project+'-db-1', 'psql',
+    '-X', '-U', 'vsa_init', '-d', 's312_test', '-v', 'ON_ERROR_STOP=1', '-c',
+    "UPDATE users SET recovery_started_at=now()-interval '6 hours' WHERE email_normalized='fixture@s312.invalid'"])
+  await click('刷新', scope)
+  await wait('document.querySelector(".quota-card")?.textContent.includes("1 / 1")')
   const cancelled = await upload()
   await waitFor(async () => {
     const result = await shell('docker', ['--context', context, 'logs', project+'-worker-1'])
@@ -160,15 +221,23 @@ try {
   await wait(`(${card(cancelled)})?.textContent.includes('已取消')`)
   assert([404, 409].includes(await run(`fetch('/api/tasks/${cancelled}/result?language=en').then(r=>r.status)`)))
 
+  if (deepseek) {
+    const { stdout } = await shell('docker', ['--context', context, 'exec', project+'-db-1', 'psql',
+      '-X', '-U', 'vsa_init', '-d', 's312_test', '-At', '-v', 'ON_ERROR_STOP=1', '-c',
+      "SELECT count(*) FROM media_assets WHERE asset_kind='ASR_AUDIO_TRANSFER'"])
+    assert.equal(stdout.trim(), '0')
+  }
   for (const id of [succeeded, cancelled]) {
     await click('删除任务', card(id))
     await wait(`!(${card(id)})`)
     assert.equal(await run(`fetch('/api/tasks/${id}/video').then(r=>r.status)`), 404)
     assert.equal(await run(`fetch('/api/tasks/${id}/result?language=en').then(r=>r.status)`), 404)
   }
+  assert.deepEqual(browserErrors, [])
   console.log(JSON.stringify({ browser: (await command('Browser.getVersion')).product,
-    uploads: 2, languages: ['zh','en'], decoded_and_seeked: true, range_status: range[0],
-    json_export: true, cross_user_denied: true, user_admin_route_denied: true,
+    uploads: 2, languages: ['zh','en'], deepseek_selected: deepseek,
+    decoded_and_seeked: true, range_status: range[0],
+    markdown_export: true, cross_user_denied: true, user_admin_route_denied: true,
     processing_cancelled: true, deleted_from_ui: 2 }))
 } finally {
   socket?.close()

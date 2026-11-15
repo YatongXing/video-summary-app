@@ -1,4 +1,4 @@
-"""PostgreSQL queue authority: FIFO with only the approved user-active exception."""
+"""PostgreSQL queue authority: FIFO with approved user activity and quota exceptions."""
 from app import maintenance
 from datetime import timedelta
 import os
@@ -96,22 +96,35 @@ def claim_next(worker_id):
             t=c.execute('SELECT * FROM tasks WHERE id=%s FOR UPDATE',(row['id'],)).fetchone()
             if t['status']!='QUEUED' or t['deletion_requested_at'] or t['deleted_at']: continue
             reason=_block_reason(c,u,t,now)
-            if reason:
+            if reason and reason != 'NO_CREDITS':
                 _event(c,t,worker_id,'BLOCK',reason,now)
                 maintenance.ensure_open()
                 return None
-            active=c.execute("SELECT id FROM tasks WHERE user_id=%s AND status='PROCESSING'",(u['id'],)).fetchone()
-            if u['role']=='USER' and active:
-                blocked_users.add(u['id']);bypassed.append(t)
+            user_active = u['role'] == 'USER' and c.execute(
+                "SELECT 1 FROM tasks WHERE user_id=%s AND status='PROCESSING'", (u['id'],)
+            ).fetchone()
+            if user_active:
+                reason = 'USER_ACTIVE_AND_NO_CREDITS' if reason else 'USER_ACTIVE'
+            if reason:
+                blocked_users.add(u['id'])
+                bypassed.append((t, reason))
                 continue
             result=tasks._start_locked(c,u,t,now,worker_id)
             started=c.execute('SELECT * FROM tasks WHERE id=%s',(t['id'],)).fetchone()
-            _event(c,started,worker_id,'CLAIM','FIFO' if not bypassed else 'USER_ACTIVE_BYPASS',now)
-            for earlier in bypassed:
-                _event(c,earlier,worker_id,'BYPASS','USER_ACTIVE',now,t['id'])
+            reasons = {reason for _, reason in bypassed}
+            claim_reason = 'FIFO'
+            if len(reasons) == 1:
+                claim_reason = next(iter(reasons)) + '_BYPASS'
+            elif reasons:
+                claim_reason = 'CONDITIONAL_BYPASS'
+            _event(c,started,worker_id,'CLAIM',claim_reason,now)
+            for earlier, reason in bypassed:
+                _event(c,earlier,worker_id,'BYPASS',reason,now,t['id'])
             maintenance.ensure_open()
             return result
-        if bypassed: _event(c,bypassed[0],worker_id,'BLOCK','USER_ACTIVE',now)
+        if bypassed:
+            earlier, reason = bypassed[0]
+            _event(c,earlier,worker_id,'BLOCK',reason,now)
         maintenance.ensure_open()
         return None
 

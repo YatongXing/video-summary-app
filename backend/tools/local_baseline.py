@@ -125,7 +125,7 @@ def main():
         rejected=users[0].post('/inputs/upload',content=b'not a video',headers={'X-Video-Filename':'synthetic.mp4','X-Upload-Authorized':'true'})
         if rejected.status_code not in (400,415,422):raise AssertionError(f'Corrupt media was not rejected: HTTP {rejected.status_code}')
         if expect(users[0].get('/tasks'),200):raise AssertionError('Input rejection created a task')
-        if expect(users[0].get('/quota'),200)['credits']!=3:raise AssertionError('Input rejection charged a credit')
+        if expect(users[0].get('/quota'),200)['credits']!=1:raise AssertionError('Input rejection charged a credit')
         checks.append('corrupt media rejected; both rejections created no task or charge')
         def sample():
             try:
@@ -188,9 +188,9 @@ def main():
         report['queue_duration']=measured([{'ok':True,'seconds':row['queue_seconds']} for row in states])
         report['stage']='results_and_content_authorization'
         for language in ('zh','en'):
-            document=expect(users[0].get(f'/tasks/{task_ids[0]}/export?language={language}'),200)
-            from app.results import validate_export
-            validate_export(document)
+            download=users[0].get(f'/tasks/{task_ids[0]}/export?language={language}')
+            assert download.status_code==200 and download.headers['content-type'].startswith('text/markdown')
+            assert download.headers['content-disposition']==f'attachment; filename="video-summary-{language}.md"'
         expect(users[1].get('/tasks/'+task_ids[0]+'/export'),404)
         expect(admin.get('/admin/tasks/'+task_ids[0]+'/result?purpose=diagnosis'),403)
         consent=expect(users[0].post('/tasks/'+task_ids[0]+'/consents',json={'purpose':'diagnosis','access_scope':'summary'}),201)
@@ -198,7 +198,7 @@ def main():
         expect(admin.get('/admin/tasks/'+task_ids[0]+'/video?purpose=diagnosis'),403)
         expect(users[0].delete('/tasks/'+task_ids[0]+'/consents/'+consent['id']),204)
         expect(admin.get('/admin/tasks/'+task_ids[0]+'/result?purpose=diagnosis'),403)
-        checks.extend(['offline independent Worker and bilingual Schema1.0 exports','cross-user denial','task-purpose-scope consent and revocation'])
+        checks.extend(['offline independent Worker and bilingual Markdown downloads','cross-user denial','task-purpose-scope consent and revocation'])
         report['stage']='deletion'
         for i,tid in enumerate(task_ids):
             expect(users[i].delete('/tasks/'+tid),202)

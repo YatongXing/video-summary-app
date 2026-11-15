@@ -1,4 +1,4 @@
-"""Validated private bilingual results; public JSON is an exact, separate contract."""
+"""Validated private bilingual results and owner-only Markdown downloads."""
 from app import maintenance
 from copy import deepcopy
 import psycopg
@@ -19,7 +19,8 @@ from app.queue import assert_fence
 router = APIRouter()
 
 class OutputError(ValueError):
-    def __init__(self):
+    def __init__(self, reason='fields'):
+        self.reason = reason
         super().__init__('Model output does not satisfy the result contract')
 
 def _keys(value, expected):
@@ -30,7 +31,9 @@ def _text(value):
     return value
 
 def _number(value, maximum):
-    if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=maximum: raise OutputError()
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not 0 <= value <= maximum or not math.isfinite(value)):
+        raise OutputError('timestamp')
     return value
 
 def _duplicates(pairs):
@@ -72,14 +75,14 @@ def validate_export(document):
     for event in events:
         _keys(event,('timestamp_seconds','title','description'))
         stamp=_number(event['timestamp_seconds'],duration)
-        if stamp<previous: raise OutputError()
+        if stamp<previous: raise OutputError('timestamp')
         previous=stamp; _text(event['title']); _text(event['description'])
     return document
 
 def validate_output(candidate,filename,duration,language):
     candidate=_parse(candidate)
     _keys(candidate,('language','summary','key_events','overview','points','chapters','limitations'))
-    if candidate['language']!=language or language not in ('zh','en'): raise OutputError()
+    if candidate['language']!=language or language not in ('zh','en'): raise OutputError('language')
     document=validate_export({'schema_version':'1.0','video':{'filename':filename,'duration_seconds':float(duration)},'language':language,'summary':candidate['summary'],'key_events':candidate['key_events']})
     _text(candidate['overview'])
     points=candidate['points']
@@ -95,7 +98,7 @@ def validate_output(candidate,filename,duration,language):
     for chapter in chapters:
         _keys(chapter,('timestamp_seconds','title'))
         stamp=_number(chapter['timestamp_seconds'],float(duration))
-        if stamp<previous: raise OutputError()
+        if stamp<previous: raise OutputError('timestamp')
         previous=stamp; _text(chapter['title'])
     return {'export':document,'presentation':{key:candidate[key] for key in ('overview','points','chapters','limitations')}}
 
@@ -153,10 +156,29 @@ def get_result(task_id,user,language,purpose=None,*,request_id=None):
 def result_route(task_id:UUID,language:str=Query('zh',pattern='^(zh|en)$'),user:Principal=Depends(current_user)):
     return get_result(task_id,user,language)
 
+def _markdown_text(text: str) -> str:
+    # Stored prose is plain text in the UI. Keep it from introducing markup or resources.
+    text = '\n'.join(line.strip() for line in text.strip().splitlines())
+    text = re.sub(r'([\\\x60*_\[\]<>#~|&])', r'\\\1', text)
+    return re.sub(r'^(?:([-+=])|(\d+)([.)])(?=\s))',
+                  lambda m: '\\' + m[1] if m[1] else m[2] + '\\' + m[3], text, flags=re.MULTILINE)
+
+
 @router.get('/tasks/{task_id}/export')
 def export_route(task_id:UUID,language:str=Query('zh',pattern='^(zh|en)$'),user:Principal=Depends(current_user)):
-    result=get_result(task_id,user,language)
-    return Response(json.dumps(result['export'],ensure_ascii=False,allow_nan=False),media_type='application/json',headers={'Content-Disposition':f'attachment; filename="video-summary-{language}.json"','X-Content-Type-Options':'nosniff'})
+    result = get_result(task_id, user, language)
+    summary_heading, chapters_heading = ('摘要', '章节') if language == 'zh' else ('Summary', 'Chapters')
+    lines = [f'## {summary_heading}', '', _markdown_text(result['export']['summary']), '', f'## {chapters_heading}', '']
+    for chapter in result['presentation']['chapters']:
+        hours, remainder = divmod(int(chapter['timestamp_seconds']), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        title = _markdown_text(' '.join(chapter['title'].split()))
+        lines.append(f'- {hours:02d}:{minutes:02d}:{seconds:02d} {title}')
+    return Response('\n'.join(lines) + '\n', media_type='text/markdown', headers={
+        'Content-Disposition': f'attachment; filename="video-summary-{language}.md"',
+        'X-Content-Type-Options': 'nosniff',
+    })
+
 
 def _video_response(task_id:UUID,request:Request,user:Principal=Depends(current_user),*,purpose=None,request_id=None):
     with tasks.connect() as connection:

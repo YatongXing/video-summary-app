@@ -53,7 +53,7 @@ def client(token=None):
 def identity(connection):
     from app.auth import digest, csrf_token
     token = uuid4().hex
-    user = connection.execute('INSERT INTO users(email_normalized,password_hash) VALUES (%s,%s) RETURNING id',
+    user = connection.execute('INSERT INTO users(email_normalized,password_hash,credits_available) VALUES (%s,%s,1) RETURNING id',
                               (str(uuid4())+'@example.invalid', 'synthetic-not-for-login')).fetchone()[0]
     connection.execute("INSERT INTO sessions(user_id,token_hash,expires_at) VALUES (%s,%s,now()+interval '1 hour')", (user, digest(token)))
     return user, token, csrf_token(token)
@@ -67,7 +67,7 @@ def upload_headers(csrf, rights=True, filename='sample.mp4'):
 def assert_no_task_or_charge(connection):
     assert connection.execute('SELECT count(*) FROM tasks').fetchone()[0] == 0
     assert connection.execute('SELECT count(*) FROM quota_events').fetchone()[0] == 0
-    assert connection.execute('SELECT min(credits_available) FROM users').fetchone()[0] in (None, 3)
+    assert connection.execute('SELECT min(credits_available) FROM users').fetchone()[0] in (None, 1)
 
 
 def test_inputs_require_login_csrf_and_rights(ingest_db):
@@ -130,31 +130,63 @@ def private_store(monkeypatch):
     return objects
 
 
-def test_valid_upload_and_url_become_owned_queued_tasks_without_spend(ingest_db,valid_video,private_store,monkeypatch,tmp_path):
+@pytest.mark.parametrize('model',[None,'deepseek-v4.1-flash'])
+def test_valid_upload_and_url_become_owned_queued_tasks_without_spend(ingest_db,valid_video,private_store,monkeypatch,tmp_path,model):
     from app import safe_download
+    monkeypatch.setenv('DEEPSEEK_ENABLED','true')
+    expected_model=model or 'qwen3.8-omni-flash'
     user,token,csrf=identity(ingest_db)
     monkeypatch.setattr(safe_download,'download_video',lambda url,path,max_bytes:path.write_bytes(valid_video))
     async def scenario():
         async with client(token) as c:
-            uploaded=await c.post('/inputs/upload',content=valid_video,headers=upload_headers(csrf,filename='../private/video.mp4'))
+            headers=upload_headers(csrf,filename='../private/video.mp4')
+            if model:
+                headers['X-Video-Model']=model
+            uploaded=await c.post('/inputs/upload',content=valid_video,headers=headers)
             assert uploaded.status_code==201,uploaded.text
             assert uploaded.json()['filename']=='video.mp4'
             assert uploaded.json()['has_audio'] is False
-            imported=await c.post('/inputs/url',json={'url':'https://example.com/video?secret=private','rights_confirmed':True},headers={'X-CSRF-Token':csrf})
+            body={'url':'https://example.com/video?secret=private','rights_confirmed':True}
+            if model:
+                body['model']=model
+            imported=await c.post('/inputs/url',json=body,headers={'X-CSRF-Token':csrf})
             assert imported.status_code==201,imported.text
             assert 'secret' not in imported.text and 'private' not in imported.text
             for response in (uploaded,imported):
                 data=response.json();assert data['status']=='QUEUED'
-                assert (await c.get('/tasks/'+data['id'])).status_code==200
+                assert data['requested_model']==expected_model
+                owner_result=await c.get('/tasks/'+data['id'])
+                assert owner_result.status_code==200 and owner_result.json()['requested_model']==expected_model
     asyncio.run(scenario())
-    rows=ingest_db.execute('SELECT user_id,started_at FROM tasks').fetchall()
-    assert len(rows)==2 and all(row[0]==user and row[1] is None for row in rows)
+    rows=ingest_db.execute('SELECT user_id,started_at,requested_model FROM tasks').fetchall()
+    assert len(rows)==2 and all(row==(user,None,expected_model) for row in rows)
     assert len(private_store)==2
     assert ingest_db.execute('SELECT count(*) FROM media_assets').fetchone()[0]==2
     assert ingest_db.execute('SELECT count(*) FROM quota_events').fetchone()[0]==0
     assert ingest_db.execute('SELECT count(*) FROM input_imports').fetchone()[0]==0
     from app.ingest import staging_dir
     assert not list(staging_dir().iterdir())
+
+
+@pytest.mark.parametrize('model,status,code',[
+    ('deepseek-v4.1-flash',409,'MODEL_DISABLED'),
+    ('unapproved-model',422,'INVALID_MODEL'),
+])
+def test_unavailable_model_rejected_before_import(ingest_db,monkeypatch,model,status,code):
+    from app import ingest
+    monkeypatch.delenv('DEEPSEEK_ENABLED',raising=False)
+    monkeypatch.setattr(ingest,'begin_import',lambda user:pytest.fail('Must reject before allocating staging'))
+    _,token,csrf=identity(ingest_db)
+
+    async def scenario():
+        async with client(token) as c:
+            headers={**upload_headers(csrf),'X-Video-Model':model}
+            local=await c.post('/inputs/upload',content=b'not read',headers=headers)
+            remote=await c.post('/inputs/url',json={'url':'https://example.com/video.mp4','rights_confirmed':True,'model':model},
+                                headers={'X-CSRF-Token':csrf})
+            assert all(result.status_code==status and result.json()['code']==code for result in (local,remote))
+    asyncio.run(scenario())
+    assert_no_task_or_charge(ingest_db)
 
 
 def test_streamed_bytes_are_bounded_without_content_length(ingest_db,monkeypatch,tmp_path):

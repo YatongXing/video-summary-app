@@ -30,7 +30,7 @@ def upload(c):
  r=c.post('/inputs/upload',content=Path(S['samples']['long']).read_bytes(),headers={'X-Upload-Authorized':'true','X-Video-Filename':'wp07a-synthetic.mp4'});assert r.status_code==201,r.text;t=r.json()['id'];wait(lambda:any(x['id']==t and x['status']=='SUCCEEDED' for x in c.get('/tasks').json()));return t
 
 def test_new_roles_migrations_and_nonroot(clients):
- rows=sql('SELECT version,sha256 FROM schema_migrations ORDER BY version');assert len(rows)==11
+ rows=sql('SELECT version,sha256 FROM schema_migrations ORDER BY version');assert len(rows)==12
  import hashlib
  assert {a:b for a,b in rows}=={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'backend/app/migrations').glob('*.sql')}
  roles=sql("SELECT rolname,rolsuper,rolcreatedb,rolcreaterole,rolbypassrls FROM pg_roles WHERE rolname IN('wp07_maint','wp07_runtime')")
@@ -46,7 +46,8 @@ def test_owner_full_pipeline_and_metadata(clients):
  for c,t in zip(clients,TASKS):
   for language in ['zh','en']:
    assert c.get(f'/tasks/{t}/result?language={language}').status_code==200
-   assert c.get(f'/tasks/{t}/export?language={language}').json()['language']==language
+   export=c.get(f'/tasks/{t}/export?language={language}')
+   assert export.status_code==200 and export.headers['content-disposition']==f'attachment; filename="video-summary-{language}.md"'
   v=c.get(f'/tasks/{t}/video',headers={'Range':'bytes=2-31'});assert v.status_code==206 and len(v.content)==30
  assert clients[2].get(f'/tasks/{TASKS[0]}/result').status_code==404
  assert clients[0].get(f'/tasks/{TASKS[1]}/video').status_code==404

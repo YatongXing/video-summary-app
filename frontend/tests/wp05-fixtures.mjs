@@ -9,7 +9,7 @@ export const tid=uuid(1),uid=uuid(10),aid=uuid(11)
 export const delay=ms=>new Promise(r=>setTimeout(r,ms))
 export function result(language='zh'){return {language,offline_test:true,export:{schema_version:'1.0',video:{filename:'synthetic.mp4',duration_seconds:60},language,summary:language==='zh'?'合成中文摘要':'Synthetic English summary',key_events:[{timestamp_seconds:1,title:'Synthetic event',description:'Fixture only'}]},presentation:{overview:'Synthetic overview',points:['one','two','three'],chapters:[{timestamp_seconds:0,title:'Beginning'}],limitations:['Synthetic only']}}}
 export async function fixture(root){
- const calls=[],state={logged:false,role:'USER',user:uid,hook:null,contentStatus:200,supportEmail:null}
+ const calls=[],state={logged:false,role:'USER',user:uid,hook:null,contentStatus:200,supportEmail:null,deepseekEnabled:false}
  const task=(id,status)=>({id,filename:id===tid?'synthetic.mp4':'state-'+status+'.mp4',status,submitted_at:new Date().toISOString(),started_at:status==='QUEUED'?null:new Date().toISOString(),finished_at:['QUEUED','PROCESSING'].includes(status)?null:new Date().toISOString(),retry_count:0,retry_allowed:status==='FAILED',cooldown_seconds:0,failure_category:status==='FAILED'?'INTERNAL':null,refund_status:status==='QUEUED'?'NOT_CHARGED':'CHARGED',api_fee_warning:false,processing_seconds:1})
  state.tasks=[task(tid,'SUCCEEDED'),task(uuid(2),'QUEUED'),task(uuid(3),'PROCESSING'),task(uuid(4),'FAILED'),task(uuid(5),'CANCELLED')]
  const session=()=>({user:{id:state.user,email:state.email||(state.role==='ADMIN'?'admin@example.invalid':'synthetic@example.invalid'),role:state.role},csrf_token:'synthetic-csrf-only'})
@@ -19,9 +19,10 @@ export async function fixture(root){
   if(path.startsWith('/api/')){
    const chunks=[];for await(const c of req)chunks.push(c)
    let body={};try{body=JSON.parse(Buffer.concat(chunks).toString()||'{}')}catch{}
-   const call={path,query:url.search,method:req.method,body,csrf:req.headers['x-csrf-token'],origin:req.headers.origin};calls.push(call)
+   const call={path,query:url.search,method:req.method,body,csrf:req.headers['x-csrf-token'],origin:req.headers.origin,model:req.headers['x-video-model']};calls.push(call)
    if(state.hook&&await state.hook(call,{req,res,json}))return
-   if(path==='/api/config/public')return json({support_email:state.supportEmail})
+   if(path==='/api/config/public')return json({support_email:state.supportEmail,default_model:'qwen3.8-omni-flash',
+     available_models:state.deepseekEnabled?['qwen3.8-omni-flash','deepseek-v4.1-flash']:['qwen3.8-omni-flash']})
    if(path==='/api/health/live')return json({status:'alive'})
    if(path==='/api/auth/login'){res.setHeader('Set-Cookie','wp05session=synthetic; HttpOnly; SameSite=Lax; Path=/');state.logged=true;state.email=body.email;state.role=body.email?.startsWith('admin')?'ADMIN':'USER';state.user=body.email?.startsWith('second')?uuid(12):state.role==='ADMIN'?aid:uid;return json(session())}
    if(path==='/api/auth/me')return json(state.logged?session():{},state.logged?200:401)
@@ -29,11 +30,17 @@ export async function fixture(root){
    if(!state.logged)return json({},401)
    if(req.method!=='GET'&&call.csrf!=='synthetic-csrf-only')return json({},403)
    if(path==='/api/auth/logout'){state.logged=false;return json({},204)}
-   if(path==='/api/quota')return json({credits:state.role==='ADMIN'?null:3,unlimited:state.role==='ADMIN',recovery_seconds:null})
+   if(path==='/api/quota')return json({credits:state.role==='ADMIN'?null:1,unlimited:state.role==='ADMIN',recovery_seconds:null})
    if(path==='/api/tasks')return json(state.tasks)
-   if(path==='/api/admin/tasks'){const q=url.searchParams.get('task_id')?.toLowerCase();let rows=state.tasks.map((t,i)=>({id:t.id,status:t.status,user_id:i===0?aid:uid,submitted_at:t.submitted_at,retry_count:0,quota_unlimited:i===0,credits_available:i===0?null:2}));if(q)rows=rows.filter(t=>t.id.toLowerCase().includes(q));rows=rows.slice(Number(url.searchParams.get('offset')||0),Number(url.searchParams.get('offset')||0)+Number(url.searchParams.get('limit')||50));return json(state.role==='ADMIN'?rows: {},state.role==='ADMIN'?200:403)}
+   if(path==='/api/admin/tasks'){const q=url.searchParams.get('task_id')?.toLowerCase();let rows=state.tasks.map((t,i)=>({id:t.id,status:t.status,user_id:i===0?aid:uid,submitted_at:t.submitted_at,retry_count:0,quota_unlimited:i===0,credits_available:i===0?null:1}));if(q)rows=rows.filter(t=>t.id.toLowerCase().includes(q));rows=rows.slice(Number(url.searchParams.get('offset')||0),Number(url.searchParams.get('offset')||0)+Number(url.searchParams.get('limit')||50));return json(state.role==='ADMIN'?rows: {},state.role==='ADMIN'?200:403)}
    if(path.endsWith('/result'))return json(result(url.searchParams.get('language')||'zh'),state.contentStatus)
-   if(path.endsWith('/export'))return json(result(url.searchParams.get('language')||'zh').export,state.contentStatus)
+   if(path.endsWith('/export')){
+    const language=url.searchParams.get('language')||'zh'
+    const {export:{summary}}=result(language)
+    if(state.contentStatus!==200)return json({},state.contentStatus)
+    res.writeHead(200,{'content-type':'text/markdown; charset=utf-8'})
+    return res.end(language==='zh'?'## 摘要\n\n'+summary+'\n\n## 章节\n\n- 00:00:00 开始\n':'## Summary\n\n'+summary+'\n\n## Chapters\n\n- 00:00:00 Beginning\n')
+   }
    if(path.endsWith('/video'))return json({},404)
    if(path.match(/\/tasks\/[^/]+$/)&&req.method==='DELETE'){state.tasks=state.tasks.filter(t=>t.id!==path.split('/').at(-1));return json({id:uuid(90),task_id:path.split('/').at(-1),accepted:true},202)}
    if(path.endsWith('/retry')){assert.equal(typeof body.request_key,'string');return json({})}

@@ -33,7 +33,8 @@ def test_owner_matrix(result_db,monkeypatch,role):
    authenticated(db,c,u)
    for lang in ['zh','en']:
     assert (await c.get(f'/tasks/{t}/result?language={lang}')).json()['language']==lang
-    assert (await c.get(f'/tasks/{t}/export?language={lang}')).json()['language']==lang
+    export=await c.get(f'/tasks/{t}/export?language={lang}')
+    assert export.status_code==200 and export.headers['content-disposition']==f'attachment; filename="video-summary-{lang}.md"'
    v=await c.get(f'/tasks/{t}/video',headers={'Range':'bytes=2-5'});assert v.status_code==206 and v.content==b'2345'
    for outsider in [other,admin]:
     authenticated(db,c,outsider)
@@ -135,7 +136,7 @@ def test_public_email_config(monkeypatch,email,expected):
  monkeypatch.setenv('SUPPORT_EMAIL',email)
  async def run():
   async with client() as c:
-   r=await c.get('/config/public');assert r.status_code==200 and r.json()=={'support_email':expected}
+   r=await c.get('/config/public');assert r.status_code==200 and r.json()=={'support_email':expected,'default_model':'qwen3.8-omni-flash','available_models':['qwen3.8-omni-flash']}
  asyncio.run(run())
 
 @pytest.mark.parametrize('mode',['missing','corrupt','mismatch','directory_missing'])
@@ -211,6 +212,7 @@ def test_partial_multimatch_pages_and_explicit_nested_allowlist(result_db):
    nested={'retry_records':{'source','accepted_at','cooldown_triggered'},'quota_events':{'event_type','delta','created_at'},'model_calls':{'status','model_version','adapter_version','prompt_version','input_tokens','output_tokens','cached_tokens','estimated_cost','currency','error_category','created_at','finished_at'}}
    for row in rows:
     assert set(row)==top
+    assert row['credits_available']==1 and row['quota_unlimited'] is False
     for key,allowed in nested.items():
      for value in row[key]:assert set(value)<=allowed
  asyncio.run(run())

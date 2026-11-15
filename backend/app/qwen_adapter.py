@@ -118,7 +118,7 @@ def _usage(value):
 class QwenModelAdapter:
     model_version = MODEL
     adapter_version = 'qwen-video-v2'
-    prompt_version = 'qwen-bilingual-v1'
+    prompt_version = 'qwen-bilingual-v2'
     max_inline_video_bytes = MAX_INLINE_VIDEO_BYTES
 
     def __init__(self, api_key, cloud=None):
@@ -182,6 +182,9 @@ class QwenModelAdapter:
             '(a list of nonempty strings). Use numeric timestamps from the start of the original video, '
             'in ascending order and within duration. If there are fewer than three defensible events, '
             'explain why in limitations. Describe missing audio or uncertain evidence without inventing it. '
+            'Write a detailed standalone summary in each language, covering the main ideas, '
+            'specific examples or steps, and conclusions supported by the video. Include any '
+            'material audio or visual limitations in the summary itself. '
             'Omit the input URL and its parameters from the output.'
         )
         content = [

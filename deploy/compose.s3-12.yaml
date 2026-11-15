@@ -1,9 +1,15 @@
 services:
+  api:
+    environment:
+      SUPPORT_EMAIL: ${VSA_S312_SUPPORT_EMAIL:-}
+      DEEPSEEK_ENABLED: ${VSA_S312_DEEPSEEK_ENABLED:-false}
   worker:
     image: ${VSA_S312_WORKER_IMAGE:?set validated Worker image}
     environment:
       WORKER_PROCESSOR_MODE: ${VSA_S312_MODE:-offline}
       MODEL_CALLS_ENABLED: ${VSA_S312_MODEL_CALLS:-false}
+      DEEPSEEK_ENABLED: ${VSA_S312_DEEPSEEK_ENABLED:-false}
+      DEEPSEEK_SUMMARY_TIMEOUT_SECONDS: ${VSA_S312_DEEPSEEK_SUMMARY_TIMEOUT:-3600}
       MODEL_ADAPTER_TIMEOUT_SECONDS: ${VSA_S312_TIMEOUT:-120}
       DASHSCOPE_API_KEY: ${VSA_S312_KEY:-}
       DASHSCOPE_BASE_URL: https://maas.qianwenaiapi.com/compatible-mode/v1

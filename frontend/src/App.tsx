@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import ImportForm from './ImportForm'
+import ImportForm, { DEEPSEEK_MODEL } from './ImportForm'
 import TaskPanel from './TaskPanel'
 import AdminPanel from './AdminPanel'
 import FeedbackFooter from './FeedbackFooter'
@@ -27,6 +27,20 @@ function requestError(status: number, mode: Mode): string {
 
 export default function App() {
   const [health, setHealth] = useState<Health>('checking')
+  const [config, setConfig] = useState<{ support_email?: unknown; available_models?: unknown }>({})
+  const deepseekAvailable = Array.isArray(config.available_models) && config.available_models.includes(DEEPSEEK_MODEL)
+  useEffect(() => {
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const response = await fetch('/api/config/public', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
+        if (!response.ok) return
+        const value: unknown = await response.json()
+        if (!controller.signal.aborted && value && typeof value === 'object') setConfig(value)
+      } catch { /* Fall back to the default model and omit feedback if configuration is unavailable. */ }
+    })()
+    return () => controller.abort()
+  }, [])
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -193,8 +207,7 @@ export default function App() {
             {session.user.role === 'ADMIN' && workspaceView === 'metadata' ? (
               <AdminPanel key={`admin-${session.user.id}-${boundary}`} onExpired={expireSession} />
             ) : <>
-              <p className="message notice">当前为离线流程验证模式：上传后生成带标识的演示摘要，不调用真实模型，也不代表视频内容分析结果。</p>
-              <ImportForm key={session.user.id+boundary} csrfToken={session.csrf_token} onExpired={expireSession} onImported={importedVideo} />
+              <ImportForm key={session.user.id+boundary} csrfToken={session.csrf_token} deepseekAvailable={deepseekAvailable} onExpired={expireSession} onImported={importedVideo} />
               <TaskPanel key={`tasks-${session.user.id}-${boundary}`} csrfToken={session.csrf_token} refreshVersion={taskRefresh} onExpired={expireSession} />
             </>}
             </>
@@ -215,7 +228,7 @@ export default function App() {
           <footer className="status-row"><span className={`status-dot ${health}`} aria-hidden="true" /><span role="status">{healthLabel}</span><button className="text-button" type="button" onClick={() => { void checkHealth(); void checkSession() }} disabled={health === 'checking' || busy}>重新检查</button></footer>
         </section>
         <p className="footer-note">本地工作空间 · 账户访问受保护</p>
-        <FeedbackFooter />
+        <FeedbackFooter configured={config.support_email} />
       </div>
     </main>
   )

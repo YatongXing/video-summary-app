@@ -6,7 +6,8 @@ param(
     [string]$StateDirectory,
     [string]$PrivateEnvPath,
     [string]$ModelEnvPath,
-    [switch]$TestQwen
+    [switch]$TestQwen,
+    [switch]$EnableDeepSeek
 )
 $ErrorActionPreference = 'Stop'
 foreach ($builtin in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility')) {
@@ -65,7 +66,19 @@ $manifestMigrations = @($manifest.migrations.PSObject.Properties | Sort-Object N
     }
     "$($_.Name)|$($_.Value)"
 })
-if ($manifestMigrations.Count -ne 11) { throw 'Expected eleven approved migration hashes.' }
+$hasModelSelection = $manifestMigrations.Count -eq 12 -and
+    $manifestMigrations[11] -cmatch '^012_task_model_selection\.sql\|[0-9a-f]{64}\z'
+if ($manifestMigrations.Count -ne 11 -and !$hasModelSelection) {
+    throw 'Expected the eleven frozen migrations and only the approved 012 extension.'
+}
+for ($index=0; $index -lt 11; $index++) {
+    if (!$manifestMigrations[$index].StartsWith(('{0:000}_' -f ($index + 1)))) {
+        throw 'The 001–011 migration sequence is incomplete.'
+    }
+}
+if ($EnableDeepSeek -and (!$hasModelSelection -or (!$formal -and !$TestQwen))) {
+    throw 'DeepSeek requires the 012 package and formal or synthetic model configuration.'
+}
 
 function Invoke-Docker([string[]]$Arguments, [string]$Step, [switch]$Optional) {
     $ErrorActionPreference = 'Continue'
@@ -108,20 +121,12 @@ function Confirm-Images {
     }
 }
 
-function Read-ModelSettings {
-    $result = @{
-        VSA_S312_MODE='offline'
-        VSA_S312_MODEL_CALLS='false'
-        VSA_S312_TIMEOUT='120'
-        VSA_S312_KEY=''
-    }
-    foreach ($field in $ossFields) { $result["VSA_S312_OSS_$field"] = '' }
-    if (!$formal -and !$TestQwen) { return $result }
+function Read-EnvSettings([string[]]$Names) {
     $values = @{}
     foreach ($line in (Get-Content -LiteralPath $ModelEnvPath)) {
-        if ($line -match '^\s*(DASHSCOPE_API_KEY|DASHSCOPE_BASE_URL|QWEN_MODEL|QWEN_OSS_REGION|QWEN_OSS_BUCKET|QWEN_OSS_ACCESS_KEY_ID|QWEN_OSS_ACCESS_KEY_SECRET)\s*=(.*)$') {
+        if ($line -match '^\s*([A-Z_][A-Z_0-9]*)\s*=(.*)$' -and $Matches[1] -in $Names) {
             $name = $Matches[1]
-            if ($values.ContainsKey($name)) { throw 'Duplicate model or OSS setting in model .env.' }
+            if ($values.ContainsKey($name)) { throw 'Duplicate supported setting in the repository .env.' }
             $value = $Matches[2].Trim()
             if ($value.Length -ge 2 -and $value[0] -eq $value[$value.Length-1] -and $value[0] -in @('"',"'")) {
                 $value = $value.Substring(1,$value.Length-2)
@@ -129,6 +134,23 @@ function Read-ModelSettings {
             $values[$name] = $value
         }
     }
+    $values
+}
+
+function Read-ModelSettings {
+    $result = @{
+        VSA_S312_MODE='offline'
+        VSA_S312_MODEL_CALLS='false'
+        VSA_S312_DEEPSEEK_ENABLED='false'
+        VSA_S312_TIMEOUT='120'
+        VSA_S312_DEEPSEEK_SUMMARY_TIMEOUT='3600'
+        VSA_S312_KEY=''
+    }
+    foreach ($field in $ossFields) { $result["VSA_S312_OSS_$field"] = '' }
+    if (!$formal -and !$TestQwen) { return $result }
+    $names = @('DASHSCOPE_API_KEY','DASHSCOPE_BASE_URL','QWEN_MODEL') + @($ossFields | ForEach-Object { "QWEN_OSS_$_" })
+    if ($EnableDeepSeek) { $names += 'DEEPSEEK_SUMMARY_TIMEOUT_SECONDS' }
+    $values = Read-EnvSettings $names
     $key = [string]$values.DASHSCOPE_API_KEY
     $prefix = if ($key.StartsWith('sk-ws-')) {'sk-ws-'} else {'sk-'}
     if ($key.StartsWith('sk-sp-') -or !$key.StartsWith($prefix) -or $key.Substring($prefix.Length) -cnotmatch '^[A-Za-z0-9._~+/-]+=*\z') {
@@ -147,6 +169,16 @@ function Read-ModelSettings {
         throw 'TestQwen accepts synthetic values only. Use sk-ws-synthetic-* and OSS credentials starting synthetic-.'
     }
     if ($formal -and $key -cmatch '^sk-ws-synthetic-') { throw 'A synthetic key cannot be used for UpgradeFormal.' }
+    if ($EnableDeepSeek) {
+        $result.VSA_S312_DEEPSEEK_ENABLED = 'true'
+        if ($values.ContainsKey('DEEPSEEK_SUMMARY_TIMEOUT_SECONDS')) {
+            $seconds = 0
+            if (![int]::TryParse($values.DEEPSEEK_SUMMARY_TIMEOUT_SECONDS,[ref]$seconds) -or $seconds -lt 1 -or $seconds -gt 3600) {
+                throw 'DEEPSEEK_SUMMARY_TIMEOUT_SECONDS must be an integer from 1 to 3600.'
+            }
+            $result.VSA_S312_DEEPSEEK_SUMMARY_TIMEOUT = [string]$seconds
+        }
+    }
     $result.VSA_S312_MODE = 'qwen'
     $result.VSA_S312_MODEL_CALLS = 'true'
     $result.VSA_S312_TIMEOUT = '600'
@@ -168,7 +200,7 @@ function Set-StackEnvironment($StackImages, $WorkerSettings, [string]$SupportEma
     $env:WP07_APP_IMAGE = $StackImages.api.tag
     $env:WP07_WEB_IMAGE = $StackImages.web.tag
     $env:VSA_S312_WORKER_IMAGE = $StackImages.worker.tag
-    $env:SUPPORT_EMAIL = $SupportEmail
+    $env:VSA_S312_SUPPORT_EMAIL = $SupportEmail
     foreach ($entry in $WorkerSettings.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key,[string]$entry.Value,'Process')
     }
@@ -256,10 +288,11 @@ function Read-Ledger {
 }
 
 function Confirm-Idle {
-    $sql = "SELECT (SELECT count(*) FROM tasks WHERE status IN ('QUEUED','PROCESSING') AND deletion_requested_at IS NULL AND deleted_at IS NULL), (SELECT count(*) FROM input_imports WHERE state IN ('STAGING','STORING') AND expires_at>now()), (SELECT count(*) FROM media_assets WHERE asset_kind='QWEN_TRANSFER' AND cleanup_state<>'DELETED');"
+    $unsettled = if ($hasModelSelection) { ", (SELECT count(*) FROM model_calls WHERE deepseek_phase IN ('ASR_SUBMITTING','ASR_WAITING','SUMMARY_SUBMITTING'))" } else { ', 0' }
+    $sql = "SELECT (SELECT count(*) FROM tasks WHERE status IN ('QUEUED','PROCESSING') AND deletion_requested_at IS NULL AND deleted_at IS NULL), (SELECT count(*) FROM input_imports WHERE state IN ('STAGING','STORING') AND expires_at>now()), (SELECT count(*) FROM media_assets WHERE asset_kind IN ('QWEN_TRANSFER','ASR_AUDIO_TRANSFER') AND cleanup_state<>'DELETED')$unsettled;"
     if ((Invoke-Docker @('exec',"$ProjectName-db-1",'psql','-X','-U','vsa_init','-d',$database,'-At','-v','ON_ERROR_STOP=1',
-        '-c',$sql) 'pending activity') -ne '0|0|0') {
-        throw 'Wait for uploads, queued tasks, processing and pending OSS cleanup before updating.'
+        '-c',$sql) 'pending activity') -ne '0|0|0|0') {
+        throw 'Wait for uploads, queued tasks, processing, pending OSS cleanup and unsettled model requests before updating.'
     }
 }
 
@@ -288,6 +321,7 @@ function Confirm-Worker($WorkerSettings) {
         WORKER_PROCESSOR_MODE=$WorkerSettings.VSA_S312_MODE
         MODEL_CALLS_ENABLED=$WorkerSettings.VSA_S312_MODEL_CALLS
         MODEL_ADAPTER_TIMEOUT_SECONDS=$WorkerSettings.VSA_S312_TIMEOUT
+        DEEPSEEK_SUMMARY_TIMEOUT_SECONDS=$WorkerSettings.VSA_S312_DEEPSEEK_SUMMARY_TIMEOUT
         DASHSCOPE_API_KEY=$WorkerSettings.VSA_S312_KEY
         DASHSCOPE_BASE_URL=$baseUrl
         QWEN_MODEL=$model
@@ -295,6 +329,11 @@ function Confirm-Worker($WorkerSettings) {
     foreach ($field in $ossFields) { $expected["QWEN_OSS_$field"] = $WorkerSettings["VSA_S312_OSS_$field"] }
     foreach ($name in $expected.Keys) {
         if ([string]$actual[$name] -cne [string]$expected[$name]) { throw "Worker did not receive expected setting: $name" }
+    }
+    $api = Read-ContainerEnvironment (Read-Container 'api')
+    foreach ($serviceEnvironment in @($api,$actual)) {
+        $setting = if ($serviceEnvironment.ContainsKey('DEEPSEEK_ENABLED')) { $serviceEnvironment.DEEPSEEK_ENABLED } else { 'false' }
+        if ($setting -cne $WorkerSettings.VSA_S312_DEEPSEEK_ENABLED) { throw 'API and Worker model switches differ.' }
     }
     for ($i=0; $i -lt 20; $i++) {
         try {
@@ -340,7 +379,6 @@ function New-IsolatedEnvironment {
 }
 
 $saved = @{}
-$ownedEnv = @('SUPPORT_EMAIL')
 $deploymentId = ''
 $replaced = $false
 $closedByUs = $false
@@ -350,9 +388,9 @@ $oldWorker = @{}
 $preserved = @{}
 $originalIds = @{}
 $originalEnvironments = @{}
-$supportEmail = ''
+$previousSupportEmail = ''
 try {
-    foreach ($entry in (Get-ChildItem Env: | Where-Object { $_.Name -match '^(WP07_|VSA_S312_|COMPOSE_)' -or $_.Name -in $ownedEnv })) {
+    foreach ($entry in (Get-ChildItem Env: | Where-Object { $_.Name -match '^(WP07_|VSA_S312_|COMPOSE_)' })) {
         $saved[$entry.Name] = $entry.Value
         [Environment]::SetEnvironmentVariable($entry.Name,$null,'Process')
     }
@@ -392,13 +430,17 @@ try {
                 $oldImages[$service] = $images[$service]
                 $preserved[$service] = $container.Id
             }
-            if ($service -eq 'api') { $supportEmail = [string]$originalEnvironments[$service].SUPPORT_EMAIL }
+            if ($service -eq 'api') { $previousSupportEmail = [string]$originalEnvironments[$service].SUPPORT_EMAIL }
             if ($service -eq 'worker') {
                 $running = $originalEnvironments[$service]
                 $oldWorker = @{
                     VSA_S312_MODE=[string]$running.WORKER_PROCESSOR_MODE
                     VSA_S312_MODEL_CALLS=[string]$running.MODEL_CALLS_ENABLED
+                    VSA_S312_DEEPSEEK_ENABLED=if ($running.ContainsKey('DEEPSEEK_ENABLED')) { $running.DEEPSEEK_ENABLED } else { 'false' }
                     VSA_S312_TIMEOUT=[string]$running.MODEL_ADAPTER_TIMEOUT_SECONDS
+                    VSA_S312_DEEPSEEK_SUMMARY_TIMEOUT=if ($running.ContainsKey('DEEPSEEK_SUMMARY_TIMEOUT_SECONDS')) {
+                        $running.DEEPSEEK_SUMMARY_TIMEOUT_SECONDS
+                    } else { '3600' }
                     VSA_S312_KEY=[string]$running.DASHSCOPE_API_KEY
                 }
                 foreach ($field in $ossFields) { $oldWorker["VSA_S312_OSS_$field"] = [string]$running["QWEN_OSS_$field"] }
@@ -406,7 +448,7 @@ try {
         }
         Confirm-Stack $oldImages $preserved -AllowStopped:$resume
         if ($resume) {
-            Set-StackEnvironment $oldImages $oldWorker $supportEmail
+            Set-StackEnvironment $oldImages $oldWorker $previousSupportEmail
             Confirm-PrivateSettings $originalEnvironments
             $null = Invoke-Docker @('start',$originalIds.db,$originalIds['object-store']) 'resume isolated storage'
             Wait-Dependencies
@@ -423,8 +465,26 @@ try {
             return
         }
         Confirm-Migrations (Read-Ledger)
+        if ($hasModelSelection) {
+            foreach ($service in @('api','worker')) {
+                $compatible = Invoke-Docker @('exec',"$ProjectName-$service-1",'python','-c',
+                    'from app.model_selection import DEEPSEEK_MODEL; print(DEEPSEEK_MODEL)') '012 rollback compatibility' -Optional
+                if ($compatible -cne 'deepseek-v4.1-flash') {
+                    $count = Invoke-Docker @('exec',"$ProjectName-db-1",'psql','-X','-U','vsa_init','-d',$database,'-At','-v','ON_ERROR_STOP=1',
+                        '-c',"SELECT count(*) FROM tasks WHERE requested_model='deepseek-v4.1-flash';") '012 rollback task compatibility'
+                    if ($EnableDeepSeek -or $count -ne '0') {
+                        throw 'The installed application is not a compatible DeepSeek rollback target.'
+                    }
+                }
+            }
+        }
     }
 
+    $supportEmail = $previousSupportEmail
+    if (Test-Path -LiteralPath $ModelEnvPath -PathType Leaf) {
+        $publicSettings = Read-EnvSettings @('SUPPORT_EMAIL')
+        if ($publicSettings.ContainsKey('SUPPORT_EMAIL')) { $supportEmail = $publicSettings.SUPPORT_EMAIL }
+    }
     Set-StackEnvironment $images $workerSettings $supportEmail
     $null = Invoke-Docker ($compose + @('config','--quiet')) 'Compose configuration'
     if ($Action -ne 'Start') { Confirm-PrivateSettings $originalEnvironments }
@@ -466,7 +526,7 @@ try {
         try {
             if ($replaced) {
                 if ((Invoke-Gate 'status').state -eq 'OPEN') { $null = Invoke-Gate 'close' }
-                Set-StackEnvironment $oldImages $oldWorker $supportEmail
+                Set-StackEnvironment $oldImages $oldWorker $previousSupportEmail
                 $null = Invoke-Docker ($compose + @('up','-d','--no-deps','--no-build','--pull','never') + $appServices) 'restore prior app images'
                 Confirm-Stack $oldImages $preserved
                 Wait-Http '/api/health/live' 200
@@ -482,7 +542,7 @@ try {
     }
     throw $failure
 } finally {
-    foreach ($entry in (Get-ChildItem Env: | Where-Object { $_.Name -match '^(WP07_|VSA_S312_|COMPOSE_)' -or $_.Name -in $ownedEnv })) {
+    foreach ($entry in (Get-ChildItem Env: | Where-Object { $_.Name -match '^(WP07_|VSA_S312_|COMPOSE_)' })) {
         [Environment]::SetEnvironmentVariable($entry.Name,$null,'Process')
     }
     foreach ($entry in $saved.GetEnumerator()) {

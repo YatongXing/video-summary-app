@@ -7,7 +7,9 @@
 | 产品与范围 | [产品需求](PRD.md) · [用户故事](product/USER_STORIES.md) |
 | 架构与安全 | [架构](ARCHITECTURE.md) · [删除、清理与维护设计](design/DELETION_OPERATIONS.md) |
 | 验收与测试 | [验收标准](AC.md) · [端到端测试计划](E2E_TEST_PLAN.md) · [质量评估](testing/QUALITY_EVALUATION.md) |
-| 使用与运维 | [本机部署与运维](../deploy/README.md) · [千问与 OSS 指南](guides/QWEN_OSS.md) |
+| 使用与运维 | [本机部署与运维](../deploy/README.md) · [资源保留与退役规则](../AGENTS.md#本机部署资源保留与退役) · [千问与 OSS 指南](guides/QWEN_OSS.md) |
+
+阶段 B 的现行实现见[模型流程](ARCHITECTURE.md#4-输入模型与输出流程)，隔离和真实样本的验证范围见[测试计划](E2E_TEST_PLAN.md#阶段-b-验证状态)，现场配置与回滚入口见[部署指南](../deploy/README.md#阶段-b-与-012-回退)。本机的验收、清理和历史部署证据由 `docs/archive/stage-b-deepseek/README.md` 索引。
 
 ## 架构决策
 

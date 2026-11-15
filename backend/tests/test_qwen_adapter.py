@@ -222,9 +222,14 @@ class QwenTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _configured_processor()
             os.environ['DASHSCOPE_API_KEY'] = KEY
-            self.assertIsInstance(_configured_processor().keywords['adapter'], QwenModelAdapter)
+            with patch('app.pipeline.run_pipeline') as pipeline:
+                context = SimpleNamespace(task={'requested_model': 'qwen3.8-omni-flash'})
+                _configured_processor()(context)
+                self.assertIsInstance(pipeline.call_args.kwargs['adapter'], QwenModelAdapter)
         with patch.dict(os.environ, {'WORKER_PROCESSOR_MODE': 'offline', 'DASHSCOPE_API_KEY': KEY}, clear=True):
-            self.assertEqual(_configured_processor().__name__, 'run_pipeline')
+            with patch('app.pipeline.run_pipeline') as pipeline:
+                _configured_processor()(SimpleNamespace(task={}))
+                self.assertIsNone(pipeline.call_args.kwargs['adapter'])
 
 
 class MockCloudStore:

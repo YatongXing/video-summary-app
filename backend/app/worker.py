@@ -273,13 +273,30 @@ def _configured_processor():
     if mode == 'disabled' and enabled == 'false':
         return None
     from app.pipeline import run_pipeline
+    from app.model_selection import DEEPSEEK_MODEL, QWEN_MODEL, deepseek_enabled
     if mode == 'offline' and enabled == 'false':
-        return run_pipeline
-    if mode == 'qwen' and enabled == 'true':
-        from functools import partial
+        if deepseek_enabled():
+            raise ValueError('DeepSeek requires external model mode')
+        qwen = deepseek = None
+    elif mode == 'qwen' and enabled == 'true':
         from app.qwen_adapter import QwenModelAdapter
-        return partial(run_pipeline, adapter=QwenModelAdapter.from_environment())
-    raise ValueError('Model mode and external-call setting do not match')
+        qwen = QwenModelAdapter.from_environment()
+        deepseek = None
+        if deepseek_enabled():
+            from app.deepseek_adapter import DeepSeekModelAdapter
+            deepseek = DeepSeekModelAdapter(os.getenv('DASHSCOPE_API_KEY', '').strip())
+    else:
+        raise ValueError('Model mode and external-call setting do not match')
+
+    def process(context):
+        model = context.task.get('requested_model', QWEN_MODEL)
+        if model == QWEN_MODEL:
+            return run_pipeline(context, adapter=qwen)
+        if model == DEEPSEEK_MODEL and deepseek is not None:
+            return run_pipeline(context, adapter=deepseek)
+        context.fail('EXTERNAL_UNAVAILABLE', 'MODEL_DISABLED')
+
+    return process
 
 
 if __name__ == '__main__':

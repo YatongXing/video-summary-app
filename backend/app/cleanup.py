@@ -129,6 +129,16 @@ def _s3call(client,method,**kw):
     maintenance.ensure_open()
     return result
 
+def _asr_cleanup_checkpoint():
+    maintenance.ensure_open()
+    deadline = _io_deadline.get()
+    if deadline is not None:
+        if time.monotonic() >= deadline:
+            raise BudgetExhausted()
+        _rate()
+        if time.monotonic() >= deadline:
+            raise BudgetExhausted()
+
 def _multipart(client,bucket,key):
     def uploads():
         marker={}
@@ -183,6 +193,9 @@ def _physical(asset):
             cloud.remove(asset)
         except Exception:
             raise CleanupFailure('TRANSIENT','QWEN_TRANSFER_CLEANUP_PENDING') from None
+    elif asset['asset_kind'] == 'ASR_AUDIO_TRANSFER':
+        from app.asr_transfer import remove_audio_asset
+        remove_audio_asset(asset, checkpoint=_asr_cleanup_checkpoint)
     elif asset['storage_backend'].startswith('WORKSPACE'):
         from app.processing import _workspace_path,_remove_workspace
         from app.processing import workspace_backend

@@ -1,4 +1,4 @@
-"""Test real Web/API and a mocked Qwen transport in a disposable S3-12 project."""
+"""Test real Web/API and mocked Qwen or DeepSeek transports in a disposable S3-12 project."""
 import argparse
 import hashlib
 import json
@@ -22,6 +22,13 @@ from unittest.mock import patch
 from app.qwen_adapter import QwenModelAdapter
 from app.worker import main
 from test_qwen_adapter import MockCloudStore, MockTransport
+from test_deepseek_adapter import MockDeepSeekTransport
+
+
+if __import__('os').getenv('DEEPSEEK_ENABLED') == 'true':
+    MockDeepSeekTransport.integration = True
+    with patch('app.deepseek_adapter.http.client.HTTPSConnection', MockDeepSeekTransport):
+        raise SystemExit(main())
 
 
 class SyntheticTransport(MockTransport):
@@ -55,10 +62,12 @@ def main():
     parser.add_argument('--api-image', default='video-summary-app-s312-api:local')
     parser.add_argument('--worker-image', default='video-summary-app-s312-worker:local')
     parser.add_argument('--web-image', default='video-summary-app-s312-web:local')
-    parser.add_argument('--cloud', action='store_true', help='Exercise the OSS branch with a mock store')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--cloud', action='store_true', help='Exercise the Qwen OSS branch with a mock store')
+    modes.add_argument('--deepseek', action='store_true', help='Exercise synthetic ASR and DeepSeek')
     args = parser.parse_args()
     environment = {k: v for k, v in os.environ.items()
-                   if not k.startswith(('WP07_', 'VSA_S311_', 'VSA_S312_', 'COMPOSE_', 'DOCKER_'))}
+                   if k != 'SUPPORT_EMAIL' and not k.startswith(('WP07_', 'VSA_S311_', 'VSA_S312_', 'COMPOSE_', 'DOCKER_'))}
     environment['COMPOSE_DISABLE_ENV_FILE'] = '1'
     docker = ['docker', '--context', args.docker_context]
     project = 'vsa-s312-e2e-' + uuid4().hex[:10]
@@ -104,8 +113,12 @@ def main():
         if path.startswith('backend/app/migrations/')
     }
     migrations = sorted((ROOT/'backend/app/migrations').glob('[0-9][0-9][0-9]_*.sql'))
-    assert [path.name[:3] for path in migrations] == [f'{number:03}' for number in range(1, 12)]
-    assert {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in migrations} == approved
+    assert len(approved) == 11
+    extension = '012_task_model_selection.sql'
+    assert [path.name for path in migrations] == [*sorted(approved), extension]
+    actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in migrations}
+    assert {name: actual[name] for name in approved} == approved
+    approved[extension] = actual[extension]
 
     assert not any(resources(kind) for kind in ('container', 'volume', 'network'))
     with tempfile.TemporaryDirectory(prefix='vsa-s312-e2e-') as temporary:
@@ -114,13 +127,14 @@ def main():
         sample.write_bytes(video)
         fixtures = tmp/'fixtures'
         fixtures.mkdir()
-        shutil.copyfile(ROOT/'backend/tests/test_qwen_adapter.py', fixtures/'test_qwen_adapter.py')
+        for file in ('test_qwen_adapter.py', 'test_deepseek_adapter.py'):
+            shutil.copyfile(ROOT/'backend/tests'/file, fixtures/file)
         (fixtures/'worker.py').write_text(WORKER, encoding='utf-8')
         run(['build', '--pull=false', '--network', 'none', '-t', fixture_image, '-f', '-', str(fixtures)],
-            stdin=f'FROM {args.worker_image}\nCOPY test_qwen_adapter.py worker.py /srv/\n')
+            stdin=f'FROM {args.worker_image}\nCOPY test_qwen_adapter.py test_deepseek_adapter.py worker.py /srv/\n')
         try:
             unit = run(['run', '--rm', '--network', 'none', '--pull', 'never', fixture_image,
-                        'python', '-m', 'unittest', '-q', 'test_qwen_adapter'])
+                        'python', '-m', 'unittest', '-q', 'test_qwen_adapter', 'test_deepseek_adapter'])
             with socket.socket() as listener:
                 listener.bind(('127.0.0.1', 0))
                 port = listener.getsockname()[1]
@@ -129,16 +143,20 @@ def main():
                 'WP07_HTTP_PORT': str(port), 'WP07_APP_IMAGE': args.api_image, 'WP07_WEB_IMAGE': args.web_image,
                 'WP07_INIT_PASSWORD': uuid4().hex, 'WP07_MAINT_PASSWORD': uuid4().hex,
                 'WP07_RUNTIME_PASSWORD': uuid4().hex, 'WP07_OBJECT_ACCESS_KEY': 'fixture'+uuid4().hex[:12],
-                'WP07_OBJECT_SECRET_KEY': uuid4().hex,
+                'WP07_OBJECT_SECRET_KEY': uuid4().hex, 'SUPPORT_EMAIL': 'feedback+s312@example.invalid',
             }
             (tmp/'test.env').write_text(''.join(f'{k}={v}\n' for k,v in config.items()), encoding='ascii')
             (tmp/'test.yaml').write_text(f"""services:
+  api:
+    environment:
+      DEEPSEEK_ENABLED: "{'true' if args.deepseek else 'false'}"
   worker:
     image: {fixture_image}
     command: ["python", "/srv/worker.py"]
     environment:
       WORKER_PROCESSOR_MODE: qwen
       MODEL_CALLS_ENABLED: "true"
+      DEEPSEEK_ENABLED: "{'true' if args.deepseek else 'false'}"
       DASHSCOPE_API_KEY: sk-ws-synthetic-fixture
       S3_11_FIXTURE_SHA256: {hashlib.sha256(video).hexdigest()}
       S3_11_FIXTURE_CLOUD: "{'1' if args.cloud else ''}"
@@ -214,11 +232,16 @@ networks:
                 wait_http('/api/health/ready', 200)
                 browser = subprocess.run(
                     ['node', str(ROOT/'frontend/tests/s312-real.mjs'), origin, str(sample), project, args.docker_context],
-                    cwd=ROOT, env=environment, text=True, encoding='utf-8', errors='replace',
+                    cwd=ROOT, env=dict(environment, S312_FIXTURE_MODE='deepseek' if args.deepseek else 'oss' if args.cloud else 'inline'),
+                    text=True, encoding='utf-8', errors='replace',
                     capture_output=True, timeout=160,
                 )
                 if browser.returncode:
-                    raise RuntimeError(f'Browser failed: {browser.stderr[-2500:]}')
+                    states = sql("SELECT status,failure_category,failure_code FROM tasks ORDER BY submitted_at")
+                    phases = sql("SELECT status,deepseek_phase FROM model_calls ORDER BY created_at")
+                    worker_log = run(['logs', project+'-worker-1'])[-1500:]
+                    raise RuntimeError(f'Browser failed: {browser.stderr[-2500:]}\n'
+                                       f'Synthetic tasks: {states}\nModel phases: {phases}\nWorker: {worker_log}')
                 evidence = json.loads(browser.stdout)
                 for _ in range(100):
                     if sql("SELECT count(*) FROM cleanup_jobs WHERE status='COMPLETED'") == '2':
@@ -235,7 +258,12 @@ networks:
                 # stdout from the transport is separate from the Python application logger.
                 assert [line for line in log.splitlines() if line.startswith('S312_MOCK_VALIDATED ')] == [
                     'S312_MOCK_VALIDATED 1', 'S312_MOCK_VALIDATED 2']
-                evidence.update({'project': project, 'images': ids, 'migrations': 11, 'isolated_network': True,
+                if args.deepseek:
+                    assert 'S312_ASR_CANCELLED' in log
+                    assert log.splitlines().count('S312_TEMP_AUDIO_VALIDATED') == 2
+                    assert sql("SELECT count(*) FROM media_assets WHERE asset_kind='ASR_AUDIO_TRANSFER'") == '0'
+                    evidence.update(temporary_asr_uploads=2, provider_expiry=True, fake_remote_deletion_records=0)
+                evidence.update({'project': project, 'images': ids, 'migrations': len(approved), 'isolated_network': True,
                                  'migration_ledger_matches_frozen': True, 'database_permissions': True,
                                  'closed_gate_verified': True, 'non_root_app_services': True,
                                  'paid_requests': 0, 'cloud_fixture': args.cloud, 'physical_cleanup': 2,

@@ -83,7 +83,7 @@ progress { width: 100%; height: 8px; accent-color: #247b6d; }
 .state-cancelled { color: #667770; background: #f0f2f1; }
 .task-card p { margin: 9px 0 0; }
 .task-time { color: #8b9991; font-size: .73rem; }
-.task-wait, .fee-warning { color: #8a602b; }
+.task-wait { color: #8a602b; }
 .task-actions { display: flex; gap: 8px; margin-top: 13px; }
 .task-actions:empty { display: none; }
 .empty-tasks { padding: 16px; background: #f7faf8; border-radius: 10px; color: #73847b; font-size: .85rem; }

@@ -24,7 +24,7 @@ def owned(name):
 def lab():
  assert S["db_url"].split("/")[-1].startswith("wp06")
  with psycopg.connect(S["db_url"],autocommit=True) as db:
-  db.execute("UPDATE users SET credits_available=3 WHERE role='USER'")
+  db.execute("UPDATE users SET credits_available=1,recovery_started_at=NULL WHERE role='USER'")
  clients=[]
  for a in S["accounts"]:
   c=httpx.Client(base_url=S["api_url"] if os.getenv("WP06_DIRECT") else S["url"],timeout=60,trust_env=False)
@@ -47,7 +47,7 @@ def test_actual_pipeline_owner_json_and_range(lab):
   for lang in ("zh","en"):
    r=c.get(f"/api/tasks/{t}/result",params={"language":lang});assert r.status_code==200
    assert r.json()["language"]==lang and r.json()["offline_test"] is True
-   e=c.get(f"/api/tasks/{t}/export",params={"language":lang});assert e.status_code==200 and e.json()["language"]==lang
+   e=c.get(f"/api/tasks/{t}/export",params={"language":lang});assert e.status_code==200 and e.headers['content-disposition']==f'attachment; filename="video-summary-{lang}.md"'
   v=c.get(f"/api/tasks/{t}/video",headers={"Range":"bytes=0-31"})
   assert v.status_code==206 and len(v.content)==32 and v.headers["content-range"].startswith("bytes 0-31/")
  assert clients[2].get(f"/api/tasks/{tasks[0]}/result").status_code==404
@@ -66,7 +66,10 @@ def test_worker_outage_fifo_quota_resume(lab):
  cs,ts=lab;workers=S["containers"]["workers"]
  for w in workers:owned(w);docker("stop",w)
  try:
+  with psycopg.connect(S["db_url"],autocommit=True) as db:
+   db.execute("UPDATE users SET recovery_started_at=now()-interval '6 hours' WHERE id=%s",(S["accounts"][1]["id"],))
   before=cs[1].get("/api/quota").json()["credits"]
+  assert before==1
   r=cs[1].post("/api/inputs/upload",content=Path(S["samples"]["short"]).read_bytes(),headers={"X-Upload-Authorized":"true","X-Video-Filename":"worker-outage.mp4"})
   assert r.status_code==201;r2=r.json()["id"]
   assert next(t for t in cs[1].get("/api/tasks").json() if t["id"]==r2)["status"]=="QUEUED"
@@ -184,4 +187,4 @@ def test_real_cr002_search_retirement_and_config(lab):
  assert owner.get(f'/api/tasks/{t}/support-request').status_code==410
  assert owner.post(f'/api/tasks/{t}/support-requests',json={'operation':'CREATE','scope':'both','expected_version':0}).status_code==410
  assert owner.get(f'/api/tasks/{t}/result').status_code==200
- assert admin.get('/api/config/public').json()=={'support_email':'feedback@example.invalid'}
+ assert admin.get('/api/config/public').json()=={'support_email':'feedback@example.invalid','default_model':'qwen3.8-omni-flash','available_models':['qwen3.8-omni-flash']}

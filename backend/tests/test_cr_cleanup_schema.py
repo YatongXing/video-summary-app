@@ -49,7 +49,7 @@ def test_runtime_cannot_insert_or_update_backup_approval(wp04_db):
 def test_frozen_migration_checksums(wp04_db):
  root=Path(__file__).parents[1]/'app'/'migrations'
  rows=wp04_db.execute("SELECT version,sha256 FROM schema_migrations ORDER BY version").fetchall()
- assert len(rows)==11
+ assert len(rows)==12
  for version,digest in rows:assert hashlib.sha256((root/version).read_bytes()).hexdigest()==digest
 
 def test_completed_requires_verified_online_timestamp(wp04_db):

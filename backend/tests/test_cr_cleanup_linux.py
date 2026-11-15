@@ -149,7 +149,7 @@ run(threading.Event(),.1,processor=processor,heartbeat_seconds=1)
    if len(paths)==2:break
   time.sleep(.1)
  else:raise AssertionError('Two real Workers never concurrently produced distinct users tasks')
- assert db.execute("SELECT count(*) FROM users WHERE credits_available=2").fetchone()[0]==2
+ assert db.execute("SELECT count(*) FROM users WHERE credits_available=0").fetchone()[0]==2
  bpath=paths['running-'+str(t2)]+'/evidence.raw'
  deadline=time.monotonic()+10
  while time.monotonic()<deadline:
