@@ -35,7 +35,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:58080/api/health/ready
 
 现有实例使用上方更新入口。以下步骤用于另行获准的全新实例。
 
-1. 确认新项目名、空闲 IPv4 回环端口、新数据库与私有桶、五个新命名卷及部署负责人。以 [参数模板](wp07.env.example)准备仓库外的私密环境文件，初始化、维护和运行密码分别生成。用 `docker compose config --quiet` 预查，限制私密文件访问。
+1. 确认新项目名、空闲 IPv4 回环端口、新数据库与私有桶、五个新命名卷及部署负责人。以 [参数模板](wp07/.env.example)准备仓库外的私密环境文件，初始化、维护和运行密码分别生成。用 `docker compose config --quiet` 预查，限制私密文件访问。
 2. 在隔离项目按[测试计划](../docs/E2E_TEST_PLAN.md#本机部署专项回归)复验候选，记录实际 API、Worker、Web、PostgreSQL 和 RustFS 镜像 ID 与冻结迁移。核对候选镜像、项目归属和端口，正式验收只用合成素材，真实模型另行配置。
 3. 用 [Compose 配方](compose.wp07.yaml)启动专用 DB 和对象存储并等待就绪。运行 `--profile initialize run --rm --no-deps volume-init`，再运行 `--profile initialize run --rm --no-deps initialize`。确认选定交付包的数据库账本（现行包为 001～012）、表 owner、runtime ACL、独立 journal 身份、producer-ready 和 CLOSED。失败停在当前阶段并保留资源诊断。
 4. 启动非 root API 和 Worker，保持 CLOSED。确认 live 可诊断，ready 和业务拒绝。获准后发布 Web 到 `127.0.0.1`，复核绑定、项目身份和巡检责任，再由维护通道执行 `open`。通过合成账户验证本人读取、元数据隔离、上传、双语导出、Range/seek 和删除，走正常删除清退测试素材。
