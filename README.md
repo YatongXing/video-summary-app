@@ -22,7 +22,7 @@
 py -3.11 backend/tools/verify_source_build.py
 ~~~
 
-[014 源码下载](https://github.com/YatongXing/video-summary-app/releases/tag/stage-c-014) · [产品、架构与测试文档](docs/README.md) · [各阶段实际验证范围](docs/E2E_TEST_PLAN.md)
+[014 源码下载](https://github.com/YatongXing/video-summary-app/releases/tag/v1.1.0) · [产品、架构与测试文档](docs/README.md) · [各阶段实际验证范围](docs/E2E_TEST_PLAN.md)
 
 ## 授权说明
 

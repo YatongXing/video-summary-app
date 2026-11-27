@@ -4,7 +4,7 @@
 
 ## 1. 下载和检查
 
-下载 [Stage C 014 源码 ZIP](https://github.com/YatongXing/video-summary-app/releases/tag/stage-c-014) 并解压到新目录，或检出同名 Git 标签。在 PowerShell 中进入包含 README.md 的源码根目录。使用下面的新 Compose 项目 vsa-first014、空闲回环端口 58114，以及新私密文件和新的持久卷。[依赖及获取方式](DEPENDENCIES.md)
+下载 [Stage C 014 源码 ZIP](https://github.com/YatongXing/video-summary-app/releases/tag/v1.1.0) 并解压到新目录，或在 Git 中检出 `v1.1.0` 标签。在 PowerShell 中进入包含 README.md 的源码根目录。使用下面的新 Compose 项目 vsa-first014、空闲回环端口 58114，以及新私密文件和新的持久卷。[依赖及获取方式](DEPENDENCIES.md)
 
 启动 Docker Desktop 并切换到 Linux 容器。两条路径都使用 Docker Desktop 和浏览器。路线 A 需要本机 Node.js 22.12 或更高版本及 npm。路线 B 用 Docker 运行 Node，无需在 Windows 安装 Node 或 Python。
 
