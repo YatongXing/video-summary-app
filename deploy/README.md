@@ -2,6 +2,8 @@
 
 正式实例 `vsa-local` 运行 Stage C 014，已应用 001～014。2026-11-26 维护门禁开放，支持普通任务和新 Bilibili 导入。默认模型为 Qwen3.8-Omni-Flash，可选 DeepSeek-V4.1-Flash。入口为 [127.0.0.1:58080](http://127.0.0.1:58080/)。部署使用 Docker Desktop 的 `desktop-linux` 上下文。Web 仅发布在本机，API、Worker、PostgreSQL 和 RustFS 通过 Docker 私网通信。开放前离线冒烟及实际开放检查见[正式验证记录](../docs/E2E_TEST_PLAN.md#stage-c-014-正式验证记录)。
 
+首次在自己的电脑创建实例，请按[从这里开始](../docs/GETTING_STARTED.md)选择源码或 Docker 路线。
+
 ## Stage C 014 正式运维
 
 使用正式容器 Compose 标签、已核验的交付包 `manifest.json` 和仓库外私密配置确认项目、文件顺序、镜像和卷。正式交付配方依次为 `compose.wp07.yaml`、`compose.s3-12.yaml`、`compose.stage-c.yaml` 和 `compose.release.yaml`。Compose 显式指定 `--context desktop-linux`、项目 `vsa-local` 及获准的 `--env-file`，用 `COMPOSE_DISABLE_ENV_FILE=1` 禁用隐式 `.env`。仅无输出校验或在进程内核对渲染，避免记录插值后的私密配置。正式配置显式保存 `BILIBILI_IMPORT_ENABLED=true`。模型和 OSS 凭据仅传给 Worker，维护身份留在独立维护服务。当前 Worker 的普通 Qwen、Qwen 视觉和 DeepSeek 摘要时限分别为 600、300、3600 秒。

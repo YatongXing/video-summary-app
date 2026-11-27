@@ -1,31 +1,28 @@
 # Video Summary App
 
-Windows 本机视频摘要应用。支持本地上传和 Bilibili BV 播放页导入，提供中英文摘要、章节和 Markdown 下载。本地视频可在结果页播放和跳转章节，Bilibili 章节使用纯文本时间戳。
+在 Windows 本机上传视频，按章节阅读中英文摘要，点击时间戳回看原片，再将结果下载为 Markdown。完整的 Stage C 014 部署还支持导入 Bilibili BV 播放页，链接来源的结果提供文字时间戳。
 
-处理默认使用 Qwen3.8-Omni-Flash。阶段 B 已实现可选的 DeepSeek-V4.1-Flash，提交时固定所选模型，重试沿用。B-5 两条真实素材与 B-6 近两小时 SSE 复测均已隔离验收。正式实例中 DeepSeek 是常驻可选模型，默认仍为 Qwen。样本覆盖和仍待验证的边界见[阶段 B 验证记录](docs/E2E_TEST_PLAN.md#阶段-b-验证状态)。
+## 第一次使用
 
+**先打开[从这里开始](docs/GETTING_STARTED.md)**。指南从下载源码写到第一次登录、上传视频和查看结果，先完成第 1 节的环境检查，再从下表选择构建路线。
 
-## 从源码构建与隔离验证
+| 你手头有什么 | 选哪条路 |
+| --- | --- |
+| 想修改源码或检查构建结果，可以安装开发工具 | [从源码部署](docs/GETTING_STARTED.md#路线-a--用本机-node-构建前端)。在本机构建前端，用项目的 Dockerfile 构建应用服务。 |
+| 只想在本机运行，已安装 Docker Desktop | [Docker 部署](docs/GETTING_STARTED.md#路线-b--在-docker-内构建前端)。按指南准备镜像，再用 Compose 启动。GitHub 的 014 Release 提供源码 ZIP。 |
 
-在 Windows 安装 Docker Desktop（Linux 容器）、Python 3.11、Node.js 22.12+（含 npm）及 Chrome 或 Edge。从仓库根目录运行：
+第一次安装 Docker、配置 WSL 2 或选择 Node.js 版本时，可以先完成[依赖安装与自检](docs/DEPENDENCIES.md)。首次使用建议从一段短的 H.264 MP4 开始。离线模式适合检查流程；要根据视频内容生成真实摘要，请按指南为 Worker 配置模型服务。默认模型为 Qwen3.8-Omni-Flash，完整部署也支持可选的 DeepSeek-V4.1-Flash。
+
+## 已有实例与开发验证
+
+- 已有正式 014 实例的负责人可直接查阅[部署、健康检查与恢复](deploy/README.md)。首次安装使用独立项目名和端口。
+- 开发者可以从仓库根目录运行下面的命令，重新构建 API、Worker 和 Web 并执行隔离验收。脚本使用模拟模型和 OSS，验证本地上传、播放、双语导出与删除，随后回收两个测试项目的容器、网络和卷。构建生成的镜像标签会打印在终端，供复核使用。
 
 ~~~powershell
-python backend/tools/verify_source_build.py
+py -3.11 backend/tools/verify_source_build.py
 ~~~
 
-首次构建从公开镜像仓库和依赖源获取所需组件。脚本通过前端锁文件在临时目录生成 Web 产物，并重新构建 API、Worker 和 Web 镜像。独立验证无需本机交付包、已有 `dist/` 或 `.env`。浏览器安装在其他位置时，可通过 `UI_TEST_BROWSER` 指定可执行文件。
-
-脚本分别启动内联媒体与模拟 OSS 两个临时项目。每个项目有独立数据库、网络和卷，Web 仅绑定本机临时端口。测试检查 Stage C 的 001～014 迁移账本及冻结字节、维护门禁、跨用户访问隔离、合成视频的中英文摘要、Markdown 下载、播放、取消和删除。验证使用模拟千问与 OSS，覆盖本地上传，并回收测试容器、网络及卷。Bilibili 下载器部署和隔离验证见 [Stage C 运维](deploy/README.md#stage-c-第二阶段发布演练)。源码镜像保留为唯一的 `vsa-source-*` 本地标签，便于复核。
-
-仅构建前端时，可在 `frontend/` 运行 `npm ci` 和 `npm run build`。如需保留本机已验收的 `dist/`，请在独立检出中运行。模型配置模板见 [.env.example](.env.example)。
-
-## 已有本机实例
-
-正式 `vsa-local` 运行 Stage C 014，于 2026-11-26 开放普通任务和新 Bilibili 导入。入口为 [127.0.0.1:58080](http://127.0.0.1:58080/)。正式运维使用单独保管的 014 交付包与私密配置。
-
-- [正式部署状态与 014 运维](deploy/README.md)
-- [千问与 OSS 操作指南](docs/guides/QWEN_OSS.md)
-- [产品、架构与测试文档](docs/README.md)
+[014 源码下载](https://github.com/YatongXing/video-summary-app/releases/tag/stage-c-014) · [产品、架构与测试文档](docs/README.md) · [各阶段实际验证范围](docs/E2E_TEST_PLAN.md)
 
 ## 授权说明
 

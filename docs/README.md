@@ -4,6 +4,7 @@
 
 | 主题 | 现行入口 |
 | --- | --- |
+| 新用户入门 | [从这里开始](GETTING_STARTED.md) · [依赖安装与自检](DEPENDENCIES.md) |
 | 产品与范围 | [产品需求](PRD.md) · [用户故事](product/USER_STORIES.md) |
 | 架构与安全 | [架构](ARCHITECTURE.md) · [删除、清理与维护设计](design/DELETION_OPERATIONS.md) |
 | 验收与测试 | [验收标准](AC.md) · [端到端测试计划](E2E_TEST_PLAN.md) · [质量评估](testing/QUALITY_EVALUATION.md) |
