@@ -136,7 +136,7 @@ def test_public_email_config(monkeypatch,email,expected):
  monkeypatch.setenv('SUPPORT_EMAIL',email)
  async def run():
   async with client() as c:
-   r=await c.get('/config/public');assert r.status_code==200 and r.json()=={'support_email':expected,'default_model':'qwen3.8-omni-flash','available_models':['qwen3.8-omni-flash']}
+   r=await c.get('/config/public');assert r.status_code==200 and r.json()=={'support_email':expected,'default_model':'qwen3.8-omni-flash','available_models':['qwen3.8-omni-flash'],'bilibili_import_enabled':True}
  asyncio.run(run())
 
 @pytest.mark.parametrize('mode',['missing','corrupt','mismatch','directory_missing'])

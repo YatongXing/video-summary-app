@@ -6,3 +6,10 @@
 !deploy/
 !deploy/Dockerfile.web
 !deploy/wp07_web.py
+!deploy/Dockerfile.stage-c-web
+!deploy/bilibili/
+!deploy/bilibili/Dockerfile
+!deploy/bilibili/requirements.txt
+!deploy/bilibili/egress.py
+!deploy/bilibili/extract.py
+!deploy/bilibili/runner.py

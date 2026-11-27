@@ -1,0 +1,28 @@
+{
+  "baseline": "bda689a2cd29dc87d4f0e000eb7a5f82f02f1154",
+  "migrations": {
+    "001_initial_schema.sql": "246dc645f61770138648b8afdf27cea69283029031d4ca46722fd7f24bb48cb5",
+    "002_auth.sql": "2ac3bb5609846bd560bf13033f36e118c7ef05fb26af5a1766ebb9dd60cb65db",
+    "003_inputs.sql": "799ee805423e151f05cd83ab2795dd66cf6a8ebe596293791ec91987d86e65f6",
+    "004_task_rules.sql": "c212c7235f20604f554f3b7a016d67244cfa1435439c09d44bb71783503b2ecd",
+    "005_queue.sql": "3e0a90ef83d97453cfec34cfae026f0ee1f63f1d43ad7ec8e7ff78f7f992a713",
+    "006_model_calls.sql": "3443e02303beeb178d4cc000734faf7f1dfef0b66b514cca8cc1ba37a3739f7f",
+    "007_task_results.sql": "ce980a3e24ba4c75eacca9d4846a3b271859b1b83d6add2a7011162b94536232",
+    "008_cleanup.sql": "9f1fa0882639ee0a712131dd632ed7f16efe696be2ec2c88165464ef866a9e04",
+    "009_deletion_control.sql": "247406e2968cf2c709e082fde64587f6b6b2675bd9f0a2009995869da6d7af0f",
+    "010_cr_support_expand.sql": "df119b7fbf4150c480f7bef96c559d777e74082bef6c1de31d3b80ba9cd05d47",
+    "011_cr_cleanup.sql": "b69ddc558587b7c8221ecbac862592512d78cae11b0a40a2b5d4835cd393a722",
+    "012_task_model_selection.sql": "242049910491e81e481feb73e0568bf9be79d1a65836d6f10f5639cb088e0f09",
+    "013_bilibili_input.sql": "a6d28a87435977ff9f8edb0a467f99b1aaec01b365d7440cdcb147ec1522fd69",
+    "014_bilibili_evidence.sql": "77826f0a74cd43478548efdf634c99e667daea32caa6886683b4d7edeeae4fe4"
+  },
+  "runtime": {
+    "backend/app/qwen_adapter.py": "62b39c7a5c72ff05f19752c5eaaec84f39f676006fecbc505eb1795e7806267a",
+    "backend/app/deepseek_adapter.py": "5bd51fa5e6a5117d5f8f3e4e302d48d55cd3e229aaaa5e3c9e61400ced99a4ce",
+    "backend/app/processing.py": "a2079650c18390a6870042e6e8f7ccf0fbed5d5c263429cdbea28550a508ac97",
+    "backend/app/visual_summary.py": "24f79ead835aec90fcdbb07dc8d20f220abcf650ae08794038caff63762d317c",
+    "backend/app/bilibili_visual.py": "50a1f595c3c218b333820f70a805846779af404e79f74f0bf87441bb7167956b",
+    "backend/app/model_adapter.py": "5e5f3c235df6f71c1ca6833373d76459f95561d0cf33567dc8411b7c4b72f9b6",
+    "deploy/bilibili/extract.py": "8f67c87ea269ef0423e544e2e61116629b84ab6ddc3ecb5156a24eacad29f826"
+  }
+}

@@ -2,9 +2,11 @@
 import functools,http.client,http.server,os
 from select import select
 from socket import MSG_PEEK
+from time import monotonic
 from urllib.parse import urlsplit
 
-IMPORT_PATHS = {'/inputs/upload', '/inputs/url'}
+IMPORT_PATHS = {'/inputs/upload', '/inputs/bilibili'}
+BILIBILI_GATEWAY_SECONDS = 915
 
 class Proxy(http.server.SimpleHTTPRequestHandler):
     protocol_version='HTTP/1.1'
@@ -14,12 +16,15 @@ class Proxy(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):self.forward()
     def do_DELETE(self):self.forward()
 
-    def wait_for_import_response(self, upstream):
+    def wait_for_import_response(self, upstream, *, deadline=None):
         # The API owns the import deadline. Watch both sockets while it validates
         # and stores the video so stopping the browser request still cancels the wait.
         sockets = [upstream, self.connection]
         while True:
-            readable, _, _ = select(sockets, [], [])
+            remaining = None if deadline is None else max(0, deadline - monotonic())
+            readable, _, _ = select(sockets, [], [], remaining)
+            if not readable:
+                raise TimeoutError('Import response deadline')
             if upstream in readable:
                 return
             if not self.connection.recv(1, MSG_PEEK):
@@ -72,7 +77,13 @@ class Proxy(http.server.SimpleHTTPRequestHandler):
                 con.send(chunk);remaining-=len(chunk)
             if is_import:
                 if remaining:raise ConnectionError('Interrupted request body')
-                self.wait_for_import_response(con.sock)
+                deadline = monotonic() + BILIBILI_GATEWAY_SECONDS if path.split('?', 1)[0] == '/inputs/bilibili' else None
+                try:
+                    self.wait_for_import_response(con.sock, deadline=deadline)
+                except TimeoutError:
+                    con.close()
+                    self.send_error(504, 'Import timed out')
+                    return
             response=con.getresponse();self.send_response(response.status)
             for k,v in response.getheaders():
                 if k.lower() not in ('connection','transfer-encoding'):self.send_header(k,v)

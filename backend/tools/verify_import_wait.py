@@ -35,7 +35,7 @@ class API(BaseHTTPRequestHandler):
             if not self.rfile.read(1):
                 observed_disconnect.set()
             return
-        assert self.path in ('/inputs/upload', '/inputs/url')
+        assert self.path in ('/inputs/upload', '/inputs/bilibili')
         time.sleep(62)
         self.respond(201, b'{"status":"QUEUED"}')
 
@@ -82,7 +82,7 @@ def ordinary_timeout():
 with ThreadPoolExecutor(max_workers=3) as pool:
     pending = [
         pool.submit(request, 'POST', '/api/inputs/upload', b'synthetic', {'Expect': '100-continue'}),
-        pool.submit(request, 'POST', '/api/inputs/url', b'synthetic'),
+        pool.submit(request, 'POST', '/api/inputs/bilibili', b'synthetic'),
     ]
     slow = pool.submit(ordinary_timeout)
     with socket.create_connection(('127.0.0.1', web.server_port), timeout=5) as browser:

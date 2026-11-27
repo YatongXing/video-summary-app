@@ -75,11 +75,26 @@ def test_inputs_require_login_csrf_and_rights(ingest_db):
     async def scenario():
         async with client() as anonymous:
             assert (await anonymous.post('/inputs/upload', content=b'bad', headers=upload_headers(csrf))).status_code == 401
-            assert (await anonymous.post('/inputs/url', json={'url':'https://example.com/video.mp4', 'rights_confirmed':True})).status_code == 401
+            assert (await anonymous.post('/inputs/bilibili', json={'url':'https://example.com/video.mp4', 'rights_confirmed':True})).status_code == 401
         async with client(token) as c:
             assert (await c.post('/inputs/upload', content=b'bad', headers={'Content-Type':'application/octet-stream'})).status_code == 403
             assert (await c.post('/inputs/upload', content=b'bad', headers=upload_headers(csrf, False))).status_code in (400, 403, 422)
-            assert (await c.post('/inputs/url', json={'url':'https://example.com/video.mp4','rights_confirmed':False}, headers={'X-CSRF-Token':csrf})).status_code in (400,403,422)
+            assert (await c.post('/inputs/bilibili', json={'url':'https://example.com/video.mp4','rights_confirmed':False}, headers={'X-CSRF-Token':csrf})).status_code in (400,403,422)
+    asyncio.run(scenario())
+    assert_no_task_or_charge(ingest_db)
+
+
+def test_removed_direct_url_api_and_disabled_bilibili(ingest_db, monkeypatch):
+    _, token, csrf = identity(ingest_db)
+    monkeypatch.setenv('BILIBILI_IMPORT_ENABLED', 'false')
+
+    async def scenario():
+        async with client(token) as c:
+            body = {'url': 'https://www.bilibili.com/video/BV1iW4113786/', 'rights_confirmed': True}
+            headers = {'X-CSRF-Token': csrf}
+            assert (await c.post('/inputs/url', json=body, headers=headers)).status_code == 404
+            disabled = await c.post('/inputs/bilibili', json=body, headers=headers)
+            assert disabled.status_code == 404 and disabled.json()['code'] == 'BILIBILI_DISABLED'
     asyncio.run(scenario())
     assert_no_task_or_charge(ingest_db)
 
@@ -88,11 +103,13 @@ def test_rejected_url_inputs_are_safe_and_do_not_enqueue(ingest_db):
     _, token, csrf = identity(ingest_db)
     urls = ['http://example.com/video.mp4', 'https://user:private-password@example.com/video.mp4',
             'https://127.0.0.1/video.mp4', 'https://[::1]/video.mp4', 'https://169.254.169.254/latest',
-            'https://10.1.2.3/video.mp4', 'https://example.com:8443/video.mp4']
+            'https://10.1.2.3/video.mp4', 'https://example.com:8443/video.mp4',
+            'https://www.bilibili.com/video/BV1iW4113786/?p=1&p=2',
+            'https://www.bilibili.com/video/BV1iW4113786/?p=0']
     async def scenario():
         async with client(token) as c:
             for url in urls:
-                response=await c.post('/inputs/url', json={'url':url,'rights_confirmed':True}, headers={'X-CSRF-Token':csrf})
+                response=await c.post('/inputs/bilibili', json={'url':url,'rights_confirmed':True}, headers={'X-CSRF-Token':csrf})
                 assert 400 <= response.status_code < 500, response.text
                 assert 'private-password' not in response.text
                 assert url not in response.text
@@ -100,6 +117,160 @@ def test_rejected_url_inputs_are_safe_and_do_not_enqueue(ingest_db):
     assert_no_task_or_charge(ingest_db)
 
 
+def test_013_preserves_local_rows_or_refuses_unexpected_url(ingest_db, monkeypatch, tmp_path):
+    import shutil
+    from app import migrate
+
+    files = migrate.MIGRATIONS_DIR
+    baseline = tmp_path/'baseline'
+    baseline.mkdir()
+    migration = files/'013_bilibili_input.sql'
+    for path in files.glob('*.sql'):
+        if path.name < '013_':
+            shutil.copyfile(path, baseline/path.name)
+    schema = sql.Identifier('stagec_upgrade_' + uuid4().hex)
+    ingest_db.execute(sql.SQL('CREATE SCHEMA {}').format(schema))
+    try:
+        ingest_db.execute(sql.SQL('SET search_path TO {}').format(schema))
+        monkeypatch.setattr(migrate, 'MIGRATIONS_DIR', baseline)
+        migrate.run_migrations(ingest_db)
+        user, _, _ = identity(ingest_db)
+        local = ingest_db.execute("INSERT INTO tasks(user_id,input_kind) VALUES (%s,'LOCAL') RETURNING id", (user,)).fetchone()[0]
+        legacy = ingest_db.execute("INSERT INTO tasks(user_id,input_kind) VALUES (%s,'URL') RETURNING id", (user,)).fetchone()[0]
+        shutil.copyfile(migration, baseline/migration.name)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrate.run_migrations(ingest_db)
+        assert ingest_db.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 12
+        assert ingest_db.execute("SELECT input_kind FROM tasks WHERE id=%s", (legacy,)).fetchone()[0] == 'URL'
+        ingest_db.execute('DELETE FROM tasks WHERE id=%s', (legacy,))
+        assert migrate.run_migrations(ingest_db) == [migration.name]
+        assert ingest_db.execute("SELECT input_kind FROM tasks WHERE id=%s", (local,)).fetchone()[0] == 'LOCAL'
+        old_bili = ingest_db.execute("INSERT INTO tasks(user_id,input_kind) VALUES (%s,'BILIBILI') RETURNING id",
+                                  (user,)).fetchone()[0]
+        with pytest.raises(psycopg.errors.CheckViolation):
+            ingest_db.execute("INSERT INTO tasks(user_id,input_kind) VALUES (%s,'URL')", (user,))
+        pilot = files/'014_bilibili_evidence.sql'
+        shutil.copyfile(pilot, baseline/pilot.name)
+        assert migrate.run_migrations(ingest_db) == [pilot.name]
+        for original in (local, old_bili):
+            assert ingest_db.execute(
+                'SELECT bilibili_evidence,bilibili_transcript FROM tasks WHERE id=%s',
+                (original,)).fetchone() == ('FULL_MEDIA', None)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            ingest_db.execute("UPDATE tasks SET bilibili_evidence='AUDIO_ONLY' WHERE id=%s", (local,))
+    finally:
+        ingest_db.execute('RESET search_path')
+        ingest_db.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(schema))
+
+
+@pytest.mark.parametrize('mode,code,status',[
+    ('truncated','BILIBILI_NO_MEDIA',422),('timeout','BILIBILI_TIMEOUT',504),
+])
+def test_bilibili_transport_failure_cleans_staging(ingest_db,monkeypatch,tmp_path,mode,code,status):
+    from app import bilibili_import
+    from app.ingest import staging_dir
+
+    _,token,csrf=identity(ingest_db)
+    socket_path=tmp_path/'download.sock'
+    monkeypatch.setenv('BILIBILI_DOWNLOAD_SOCKET',str(socket_path))
+    if mode=='timeout':
+        monkeypatch.setattr(bilibili_import,'IMPORT_SECONDS',.25)
+
+    async def scenario():
+        closed=asyncio.Event()
+
+        async def transport(reader,writer):
+            try:
+                request=await reader.readuntil(b'\r\n\r\n')
+                assert request.startswith(b'GET /BV1iW4113786/1/auto ')
+                if mode=='truncated':
+                    writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n'
+                                 b'X-Import-Source: BV1iW4113786:1\r\nX-Import-Duration: 2\r\nX-Import-Evidence: AUDIO_ONLY\r\n\r\n'
+                                 + b'a'*70000)
+                    await writer.drain()
+                else:
+                    assert await reader.read() == b''
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                closed.set()
+
+        async with await asyncio.start_unix_server(transport,path=socket_path):
+            async with client(token) as c:
+                response=await c.post('/inputs/bilibili',json={
+                    'url':'https://www.bilibili.com/video/BV1iW4113786/', 'rights_confirmed':True},
+                    headers={'X-CSRF-Token':csrf})
+            assert response.status_code==status and response.json()['code']==code
+            await asyncio.wait_for(closed.wait(),2)
+
+    asyncio.run(scenario())
+    assert_no_task_or_charge(ingest_db)
+    assert ingest_db.execute('SELECT count(*) FROM input_imports').fetchone()[0]==0
+    assert not list(staging_dir().iterdir())
+
+
+def test_bilibili_recovery_removes_expired_registered_staging(ingest_db):
+    from app.auth import Principal
+    from app.ingest import begin_import, recover_staging
+
+    user,_,_=identity(ingest_db)
+    session=ingest_db.execute('SELECT id FROM sessions WHERE user_id=%s',(user,)).fetchone()[0]
+    principal=Principal(user,'synthetic@example.invalid','USER',session)
+    identifier,_,path=begin_import(principal,expires_in=0)
+    path.write_bytes(b'interrupted Bilibili staging')
+    recover_staging()
+    assert not path.exists()
+    assert ingest_db.execute('SELECT count(*) FROM input_imports WHERE id=%s',(identifier,)).fetchone()[0]==0
+    assert_no_task_or_charge(ingest_db)
+
+
+def test_bilibili_client_disconnect_closes_downloader_and_cleans(ingest_db,monkeypatch,tmp_path):
+    import json
+    from app.ingest import staging_dir
+    from app.main import app
+
+    _,token,csrf=identity(ingest_db)
+    address=tmp_path/'download.sock'
+    monkeypatch.setenv('BILIBILI_DOWNLOAD_SOCKET',str(address))
+
+    async def scenario():
+        started=asyncio.Event()
+        closed=asyncio.Event()
+        request=asyncio.Queue()
+        sent=[]
+
+        async def downloader(reader,writer):
+            try:
+                await reader.readuntil(b'\r\n\r\n')
+                started.set()
+                assert await reader.read()==b''
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                closed.set()
+
+        async def send(event):
+            sent.append(event)
+
+        body=json.dumps({'url':'https://www.bilibili.com/video/BV1iW4113786/',
+                         'rights_confirmed':True}).encode()
+        await request.put({'type':'http.request','body':body})
+        scope={'type':'http','method':'POST','path':'/inputs/bilibili','query_string':b'',
+               'scheme':'http','client':('127.0.0.1',12345),'server':('127.0.0.1',8000),
+               'headers':[(b'origin',b'http://127.0.0.1:8000'),(b'cookie',f'vsa_session={token}'.encode()),
+                          (b'content-type',b'application/json'),(b'x-csrf-token',csrf.encode())]}
+        async with await asyncio.start_unix_server(downloader,path=address):
+            operation=asyncio.create_task(app(scope,request.get,send))
+            await asyncio.wait_for(started.wait(),2)
+            await request.put({'type':'http.disconnect'})
+            await asyncio.wait_for(operation,3)
+            await asyncio.wait_for(closed.wait(),2)
+        assert sent[0]['status']==499
+
+    asyncio.run(scenario())
+    assert_no_task_or_charge(ingest_db)
+    assert ingest_db.execute('SELECT count(*) FROM input_imports').fetchone()[0]==0
+    assert not list(staging_dir().iterdir())
 def test_non_media_uploads_are_rejected_without_charge(ingest_db):
     _, token, csrf = identity(ingest_db)
     async def scenario():
@@ -125,18 +296,31 @@ def valid_video(tmp_path):
 def private_store(monkeypatch):
     from app import object_store
     objects={}
-    monkeypatch.setattr(object_store,'put_original',lambda path,key:objects.__setitem__(key,path.read_bytes()))
+    monkeypatch.setattr(object_store,'put_original',lambda path,key,**_options:objects.__setitem__(key,path.read_bytes()))
     monkeypatch.setattr(object_store,'delete_original',lambda key:objects.pop(key,None))
     return objects
 
 
 @pytest.mark.parametrize('model',[None,'deepseek-v4.1-flash'])
 def test_valid_upload_and_url_become_owned_queued_tasks_without_spend(ingest_db,valid_video,private_store,monkeypatch,tmp_path,model):
-    from app import safe_download
+    from app import bilibili_import
     monkeypatch.setenv('DEEPSEEK_ENABLED','true')
     expected_model=model or 'qwen3.8-omni-flash'
     user,token,csrf=identity(ingest_db)
-    monkeypatch.setattr(safe_download,'download_video',lambda url,path,max_bytes:path.write_bytes(valid_video))
+    import subprocess
+    local = tmp_path/'local.mp4'
+    local.write_bytes(valid_video)
+    with_audio = tmp_path/'with_audio.mp4'
+    subprocess.run([os.getenv('FFMPEG_BIN','ffmpeg'),'-nostdin','-v','error','-i',str(local),
+                    '-f','lavfi','-i','anullsrc','-c:v','copy','-c:a','aac','-shortest',str(with_audio)],
+                   check=True,timeout=30)
+
+    async def fixture_download(source, path, *, combine_visual):
+        assert source == ('BV1iW4113786', 2) and combine_visual
+        path.write_bytes(with_audio.read_bytes())
+        return 1.0, 'FULL_MEDIA'
+
+    monkeypatch.setattr(bilibili_import,'download',fixture_download)
     async def scenario():
         async with client(token) as c:
             headers=upload_headers(csrf,filename='../private/video.mp4')
@@ -146,10 +330,10 @@ def test_valid_upload_and_url_become_owned_queued_tasks_without_spend(ingest_db,
             assert uploaded.status_code==201,uploaded.text
             assert uploaded.json()['filename']=='video.mp4'
             assert uploaded.json()['has_audio'] is False
-            body={'url':'https://example.com/video?secret=private','rights_confirmed':True}
+            body={'url':'https://www.bilibili.com/video/BV1iW4113786/?p=2&secret=private','rights_confirmed':True,'combine_visual':True}
             if model:
                 body['model']=model
-            imported=await c.post('/inputs/url',json=body,headers={'X-CSRF-Token':csrf})
+            imported=await c.post('/inputs/bilibili',json=body,headers={'X-CSRF-Token':csrf})
             assert imported.status_code==201,imported.text
             assert 'secret' not in imported.text and 'private' not in imported.text
             for response in (uploaded,imported):
@@ -182,7 +366,7 @@ def test_unavailable_model_rejected_before_import(ingest_db,monkeypatch,model,st
         async with client(token) as c:
             headers={**upload_headers(csrf),'X-Video-Model':model}
             local=await c.post('/inputs/upload',content=b'not read',headers=headers)
-            remote=await c.post('/inputs/url',json={'url':'https://example.com/video.mp4','rights_confirmed':True,'model':model},
+            remote=await c.post('/inputs/bilibili',json={'url':'https://example.com/video.mp4','rights_confirmed':True,'model':model},
                                 headers={'X-CSRF-Token':csrf})
             assert all(result.status_code==status and result.json()['code']==code for result in (local,remote))
     asyncio.run(scenario())

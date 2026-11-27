@@ -65,6 +65,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--cloud', action='store_true', help='Exercise the Qwen OSS branch with a mock store')
     modes.add_argument('--deepseek', action='store_true', help='Exercise synthetic ASR and DeepSeek')
+    parser.add_argument('--stage-c-source', action='store_true', help='Verify the full 001–014 source ledger')
     args = parser.parse_args()
     environment = {k: v for k, v in os.environ.items()
                    if k != 'SUPPORT_EMAIL' and not k.startswith(('WP07_', 'VSA_S311_', 'VSA_S312_', 'COMPOSE_', 'DOCKER_'))}
@@ -114,11 +115,15 @@ def main():
     }
     migrations = sorted((ROOT/'backend/app/migrations').glob('[0-9][0-9][0-9]_*.sql'))
     assert len(approved) == 11
-    extension = '012_task_model_selection.sql'
-    assert [path.name for path in migrations] == [*sorted(approved), extension]
-    actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in migrations}
-    assert {name: actual[name] for name in approved} == approved
-    approved[extension] = actual[extension]
+    if args.stage_c_source:
+        candidate = json.loads((ROOT/'docs/baseline/stage-c-014-fingerprints.json').read_text(encoding='utf-8'))
+        approved = candidate['migrations']
+    else:
+        extension = '012_task_model_selection.sql'
+        approved[extension] = hashlib.sha256((ROOT/'backend/app/migrations'/extension).read_bytes()).hexdigest()
+    actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in migrations
+              if args.stage_c_source or path.name in approved}
+    assert actual == approved
 
     assert not any(resources(kind) for kind in ('container', 'volume', 'network'))
     with tempfile.TemporaryDirectory(prefix='vsa-s312-e2e-') as temporary:

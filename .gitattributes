@@ -1,2 +1,11 @@
 # The database ledger hashes the original migration bytes.
 backend/app/migrations/*.sql -text whitespace=cr-at-eol
+
+# Keep accepted Stage C module hashes portable across checkouts.
+backend/app/bilibili_visual.py text eol=lf
+backend/app/deepseek_adapter.py text eol=lf
+backend/app/model_adapter.py text eol=lf
+backend/app/processing.py text eol=lf
+backend/app/qwen_adapter.py text eol=lf
+backend/app/visual_summary.py text eol=lf
+deploy/bilibili/extract.py text eol=lf

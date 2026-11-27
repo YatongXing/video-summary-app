@@ -87,9 +87,9 @@ def _audit(c,t,reason,result,now):
     c.execute("INSERT INTO audit_events(target_user_id,task_id,event_type,reason_code,result,retention_class,created_at) VALUES (%s,%s,'TASK_STATE',%s,%s,'TASK_30D',%s)",(t['user_id'],t['id'],reason,result,now))
 
 def _deepseek_retry_reason(c, task):
-    if task['requested_model'] != DEEPSEEK_MODEL:
+    if task['requested_model'] != DEEPSEEK_MODEL and task.get('bilibili_evidence') != 'AUDIO_ONLY':
         return None
-    if not deepseek_enabled():
+    if task['requested_model'] == DEEPSEEK_MODEL and not deepseek_enabled():
         return 'MODEL_DISABLED'
     pending = c.execute('''SELECT 1 FROM model_calls WHERE task_id=%s AND user_id=%s
         AND deepseek_phase IN ('ASR_SUBMITTING','ASR_WAITING','SUMMARY_SUBMITTING') LIMIT 1''',
@@ -104,7 +104,7 @@ def _metadata(c,t,u,now):
     latest_retry=c.execute('SELECT max(accepted_at) AS at FROM retry_events WHERE task_id=%s',(t['id'],)).fetchone()['at']
     queued_at=max(t['submitted_at'],latest_retry) if latest_retry else t['submitted_at']
     refund='UNLIMITED' if u['role']=='ADMIN' else 'REFUNDED' if 'REFUND' in events else 'CHARGED' if 'SPEND' in events else 'NOT_CHARGED'
-    return {'id':str(t['id']),'status':t['status'],'filename':t['display_filename'],'requested_model':t['requested_model'],
+    return {'id':str(t['id']),'status':t['status'],'filename':t['display_filename'],'requested_model':t['requested_model'],'input_kind':t['input_kind'],
             'created_at':t['created_at'],'submitted_at':t['submitted_at'],'started_at':t['started_at'],'finished_at':t['finished_at'],
             'retry_count':t['retry_count'],'cooldown_seconds':cooldown,'retry_allowed':reason is None,'retry_reason':reason,
             'failure_category':t['failure_category'],'failure_code':t['failure_code'],'refund_status':refund,

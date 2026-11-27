@@ -187,4 +187,4 @@ def test_real_cr002_search_retirement_and_config(lab):
  assert owner.get(f'/api/tasks/{t}/support-request').status_code==410
  assert owner.post(f'/api/tasks/{t}/support-requests',json={'operation':'CREATE','scope':'both','expected_version':0}).status_code==410
  assert owner.get(f'/api/tasks/{t}/result').status_code==200
- assert admin.get('/api/config/public').json()=={'support_email':'feedback@example.invalid','default_model':'qwen3.8-omni-flash','available_models':['qwen3.8-omni-flash']}
+ assert admin.get('/api/config/public').json()=={'support_email':'feedback@example.invalid','default_model':'qwen3.8-omni-flash','available_models':['qwen3.8-omni-flash'],'bilibili_import_enabled':True}

@@ -10,7 +10,7 @@ export const delay=ms=>new Promise(r=>setTimeout(r,ms))
 export function result(language='zh'){return {language,offline_test:true,export:{schema_version:'1.0',video:{filename:'synthetic.mp4',duration_seconds:60},language,summary:language==='zh'?'合成中文摘要':'Synthetic English summary',key_events:[{timestamp_seconds:1,title:'Synthetic event',description:'Fixture only'}]},presentation:{overview:'Synthetic overview',points:['one','two','three'],chapters:[{timestamp_seconds:0,title:'Beginning'}],limitations:['Synthetic only']}}}
 export async function fixture(root){
  const calls=[],state={logged:false,role:'USER',user:uid,hook:null,contentStatus:200,supportEmail:null,deepseekEnabled:false}
- const task=(id,status)=>({id,filename:id===tid?'synthetic.mp4':'state-'+status+'.mp4',status,submitted_at:new Date().toISOString(),started_at:status==='QUEUED'?null:new Date().toISOString(),finished_at:['QUEUED','PROCESSING'].includes(status)?null:new Date().toISOString(),retry_count:0,retry_allowed:status==='FAILED',cooldown_seconds:0,failure_category:status==='FAILED'?'INTERNAL':null,refund_status:status==='QUEUED'?'NOT_CHARGED':'CHARGED',api_fee_warning:false,processing_seconds:1})
+ const task=(id,status)=>({id,input_kind:'LOCAL',filename:id===tid?'synthetic.mp4':'state-'+status+'.mp4',status,submitted_at:new Date().toISOString(),started_at:status==='QUEUED'?null:new Date().toISOString(),finished_at:['QUEUED','PROCESSING'].includes(status)?null:new Date().toISOString(),retry_count:0,retry_allowed:status==='FAILED',cooldown_seconds:0,failure_category:status==='FAILED'?'INTERNAL':null,refund_status:status==='QUEUED'?'NOT_CHARGED':'CHARGED',api_fee_warning:false,processing_seconds:1})
  state.tasks=[task(tid,'SUCCEEDED'),task(uuid(2),'QUEUED'),task(uuid(3),'PROCESSING'),task(uuid(4),'FAILED'),task(uuid(5),'CANCELLED')]
  const session=()=>({user:{id:state.user,email:state.email||(state.role==='ADMIN'?'admin@example.invalid':'synthetic@example.invalid'),role:state.role},csrf_token:'synthetic-csrf-only'})
  const server=createServer(async(req,res)=>{
@@ -21,7 +21,7 @@ export async function fixture(root){
    let body={};try{body=JSON.parse(Buffer.concat(chunks).toString()||'{}')}catch{}
    const call={path,query:url.search,method:req.method,body,csrf:req.headers['x-csrf-token'],origin:req.headers.origin,model:req.headers['x-video-model']};calls.push(call)
    if(state.hook&&await state.hook(call,{req,res,json}))return
-   if(path==='/api/config/public')return json({support_email:state.supportEmail,default_model:'qwen3.8-omni-flash',
+   if(path==='/api/config/public')return json({support_email:state.supportEmail,bilibili_import_enabled:true,default_model:'qwen3.8-omni-flash',
      available_models:state.deepseekEnabled?['qwen3.8-omni-flash','deepseek-v4.1-flash']:['qwen3.8-omni-flash']})
    if(path==='/api/health/live')return json({status:'alive'})
    if(path==='/api/auth/login'){res.setHeader('Set-Cookie','wp05session=synthetic; HttpOnly; SameSite=Lax; Path=/');state.logged=true;state.email=body.email;state.role=body.email?.startsWith('admin')?'ADMIN':'USER';state.user=body.email?.startsWith('second')?uuid(12):state.role==='ADMIN'?aid:uid;return json(session())}

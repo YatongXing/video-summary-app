@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react'
-type Result={language:'zh'|'en';export:{summary:string};presentation:{chapters:{timestamp_seconds:number;title:string}[]}}
+type Result={evidence?:string;language:'zh'|'en';export:{summary:string};presentation:{chapters:{timestamp_seconds:number;title:string}[]}}
 const stamp=(n:number)=>`${Math.floor(n/60)}:${String(Math.floor(n%60)).padStart(2,'0')}`
-export default function ResultPanel({taskId,onExpired}:{taskId:string;onExpired:()=>void}){
+export default function ResultPanel({taskId,playback,onExpired}:{taskId:string;playback:boolean;onExpired:()=>void}){
  const [language,setLanguage]=useState<'zh'|'en'>('zh'),[result,setResult]=useState<Result|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[downloading,setDownloading]=useState(false),[failed,setFailed]=useState(false)
  const video=useRef<HTMLVideoElement>(null),generation=useRef(0),downloads=useRef(new Set<AbortController>()),urls=useRef(new Set<string>())
  const base=`/api/tasks/${taskId}`
@@ -36,17 +36,18 @@ export default function ResultPanel({taskId,onExpired}:{taskId:string;onExpired:
   }catch{if(valid())setError('无法下载 Markdown，请刷新状态后再试。')}
   finally{downloads.current.delete(c);if(valid())setDownloading(false)}
  }
- const showVideo=!failed
+ const showVideo=playback&&!failed
  return <section className="result-panel" aria-label="视频总结结果">
  <div className="result-toolbar"><label>输出语言 <select value={language} onChange={e=>setLanguage(e.target.value as 'zh'|'en')}><option value="zh">中文</option><option value="en">English</option></select></label><button type="button" className="secondary" disabled={!result||loading||downloading} onClick={()=>void download()}>下载 Markdown</button></div>
  {error&&<p className="message error" role="alert">{error}</p>}{loading&&<p role="status">正在读取结果…</p>}
  {showVideo&&<video ref={video} controls preload="metadata" src={base+'/video'} aria-label="原始视频播放器" onError={()=>{setFailed(true);setError('视频暂不可播放，请刷新访问状态后重试。');}}/>}
  {result&&<div lang={language==='zh'?'zh-CN':'en'}>
   <h3>摘要</h3>
+  {result.evidence && <p className="result-evidence">{result.evidence}</p>}
   <p className="summary-text">{result.export.summary}</p>
   <h3>章节</h3>
   <ol className="timeline">{result.presentation.chapters.map((chapter,i)=><li key={i}>
-   <button type="button" className="timestamp" disabled={!showVideo} onClick={()=>{if(video.current)video.current.currentTime=chapter.timestamp_seconds}}>{stamp(chapter.timestamp_seconds)}</button> {chapter.title}
+   {playback ? <button type="button" className="timestamp" disabled={!showVideo} onClick={()=>{if(video.current)video.current.currentTime=chapter.timestamp_seconds}}>{stamp(chapter.timestamp_seconds)}</button> : <span>{new Date(Math.floor(chapter.timestamp_seconds)*1000).toISOString().slice(11,19)}</span>} {chapter.title}
   </li>)}</ol>
  </div>}
  </section>

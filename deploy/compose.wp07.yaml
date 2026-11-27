@@ -25,6 +25,7 @@ x-app: &app
     PROCESSING_WORK_DIR: /control/processing
     MAINTENANCE_GATE_REQUIRED: "true"
     MODEL_CALLS_ENABLED: "false"
+    BILIBILI_IMPORT_ENABLED: "false"
     WORKER_PROCESSOR_MODE: offline
     CLEANUP_ENABLED: "true"
     CLEANUP_POLL_SECONDS: "5"

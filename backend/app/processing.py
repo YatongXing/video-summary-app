@@ -3,6 +3,7 @@ from app import maintenance
 from contextlib import contextmanager, ExitStack
 from dataclasses import replace
 from pathlib import Path
+from psycopg.types.json import Jsonb
 import logging
 import os
 import re
@@ -11,7 +12,10 @@ from uuid import uuid4
 from app import object_store, tasks
 from app.preprocess import prepare_media, PreprocessError
 from app.media import MAX_BYTES
-from app.model_adapter import ModelRequest, VisualEvidence, AudioEvidence, ModelResponse, TokenUsage, AdapterError, validate_response, validate_usage
+from app.bilibili_evidence import (
+    AUDIO, AUDIO_BYTES, FULL, SUBTITLES, MAX_TRANSCRIPT_BYTES, VISUAL_BYTES, parse_subtitles, segments,
+)
+from app.model_adapter import ModelRequest, VisualEvidence, AudioEvidence, ModelResponse, TokenUsage, TranscriptSegment, AdapterError, validate_response, validate_usage
 
 logger = logging.getLogger(__name__)
 
@@ -258,23 +262,78 @@ def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
     """One adapter attempt; never invokes complete or automatically retries."""
     maintenance.ensure_open()
     from app.deepseek_adapter import DeepSeekModelAdapter, MAX_FRAMES, MAX_FRAME_BYTES, ASR_SECONDS
+    from app.qwen_adapter import QwenModelAdapter
     deepseek = isinstance(adapter, DeepSeekModelAdapter)
     try:
         _check(context)
         def source(c,task):
             if c.execute('SELECT id FROM model_calls WHERE task_id=%s AND lease_generation=%s',(task['id'],context.generation)).fetchone():raise AlreadyAnalyzed()
-            row=c.execute("SELECT storage_key FROM media_assets WHERE task_id=%s AND user_id=%s AND asset_kind='ORIGINAL' AND cleanup_state='REGISTERED' ORDER BY created_at,id LIMIT 1",(task['id'],task['user_id'])).fetchone()
+            row=c.execute("SELECT storage_key,has_audio FROM media_assets WHERE task_id=%s AND user_id=%s AND asset_kind='ORIGINAL' AND cleanup_state='REGISTERED' ORDER BY created_at,id LIMIT 1",(task['id'],task['user_id'])).fetchone()
             if row is None:raise AdapterError('internal')
-            return row['storage_key'],task.get('duration_seconds'),task.get('display_filename')
-        key,duration,filename=context.fenced_write(source)
+            subtitle = None
+            if task['input_kind'] == 'BILIBILI' and task.get('bilibili_evidence') == FULL:
+                subtitle = c.execute("""SELECT storage_key FROM media_assets WHERE task_id=%s AND user_id=%s
+                    AND asset_kind='BILIBILI_SUBTITLES' AND cleanup_state='REGISTERED'""",
+                    (task['id'],task['user_id'])).fetchone()
+            return row, subtitle, task
+        original_asset, subtitle_asset, task=context.fenced_write(source)
+        key,has_audio=original_asset['storage_key'],original_asset['has_audio']
+        duration,filename=task.get('duration_seconds'),task.get('display_filename')
+        kind=task.get('bilibili_evidence', FULL)
+        text_only=kind in (SUBTITLES,AUDIO)
+        visual_bilibili = (kind == FULL and task['input_kind'] == 'BILIBILI'
+                           and isinstance(adapter, (QwenModelAdapter, DeepSeekModelAdapter)))
         with _workspace(context) as directory, ExitStack() as transfers:
-            original=directory/'original'
-            if deepseek:
+            original=directory/('audio.m4a' if kind == AUDIO else 'original')
+            if visual_bilibili and not deepseek:
+                timeout = float(os.getenv('QWEN_VISUAL_CALL_TIMEOUT_SECONDS', '300'))
+            elif deepseek:
                 timeout = int(os.getenv('DEEPSEEK_SUMMARY_TIMEOUT_SECONDS', '3600'))
             else:
                 timeout = float(os.getenv('MODEL_ADAPTER_TIMEOUT_SECONDS', '120'))
             inline_limit=getattr(adapter,'max_inline_video_bytes',None)
-            if inline_limit is not None:
+            if visual_bilibili:
+                from app.bilibili_visual import ensure_space, prepare_visual
+                if duration is None:
+                    raise AdapterError('input')
+                duration = float(duration)
+                ensure_space(directory, VISUAL_BYTES + AUDIO_BYTES)
+                def local_checkpoint():
+                    if context.cancelled.is_set():
+                        raise ProcessingCancelled('Processing cancelled')
+                download_original(key, original, local_checkpoint, inline_limit=VISUAL_BYTES)
+                transcript = ()
+                if subtitle_asset:
+                    subtitle = directory / 'subtitle.json'
+                    download_original(subtitle_asset['storage_key'], subtitle, local_checkpoint,
+                                      inline_limit=MAX_TRANSCRIPT_BYTES)
+                    transcript = parse_subtitles(subtitle.read_bytes(), duration)
+                    subtitle.unlink()
+                frames, visual_audio = prepare_visual(original, duration, needs_audio=has_audio and not transcript,
+                                                       checkpoint=local_checkpoint)
+                limitations = ['Up to 1000 time points span the video, normally about six seconds apart. '
+                               'Repeated frames may be omitted. Blank cells are padding. '
+                               'Events between samples may be missing.']
+                request = ModelRequest(float(duration), frames, language=language, timeout_seconds=timeout,
+                    limitations=tuple(limitations), prompt_version=adapter.prompt_version, task_id=str(context.id),
+                    transcript=tuple(TranscriptSegment(*item) for item in transcript))
+                policy_version = 'bilibili-contact-sheets-v1'
+            elif text_only:
+                if duration is None:
+                    raise AdapterError('input')
+                transcript = task.get('bilibili_transcript')
+                if kind == SUBTITLES:
+                    download_original(key, original, lambda:_check(context), inline_limit=MAX_TRANSCRIPT_BYTES)
+                    transcript = parse_subtitles(original.read_bytes(), float(duration))
+                elif transcript is None:
+                    download_original(key, original, lambda:_check(context), inline_limit=64 * 1024 * 1024)
+                else:
+                    transcript = segments(transcript, float(duration))
+                request=ModelRequest(float(duration), (), language=language, timeout_seconds=timeout,
+                    prompt_version=adapter.prompt_version, task_id=str(context.id),
+                    transcript=tuple(TranscriptSegment(*item) for item in (transcript or ())))
+                policy_version='bilibili-text-evidence-v1'
+            elif inline_limit is not None:
                 if duration is None:raise AdapterError('input')
                 cloud = getattr(adapter, 'cloud', None)
                 download_original(key,original,lambda:_check(context),inline_limit=None if cloud else inline_limit)
@@ -308,18 +367,53 @@ def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
                 if row is None:raise AlreadyAnalyzed()
             context.fenced_write(begin)
             try:
-                if deepseek:
-                    def phase(value, job_id=None):
-                        _deepseek_phase(context, value, job_id)
-                    if prepared.audio is not None:
-                        url = adapter.upload_audio(prepared.audio.path, lambda: _check(context))
-                        asr_check = _deadline_checkpoint(context, time.monotonic() + ASR_SECONDS)
-                        transcript = adapter.transcribe(url, prepared.audio, prepared.duration_seconds, asr_check, phase)
-                        request = replace(request, transcript=transcript)
+                def phase(value, job_id=None):
+                    _deepseek_phase(context, value, job_id)
+
+                if (kind == AUDIO or visual_bilibili and visual_audio is not None) and not request.transcript:
+                    from app.preprocess import PreparedAudio
+                    if os.getenv('MODEL_CALLS_ENABLED', 'false') != 'true':
+                        raise AdapterError('unavailable')
+                    # Both summary models share the existing file-transcription service.
+                    asr = adapter if deepseek else DeepSeekModelAdapter(os.environ['DASHSCOPE_API_KEY'].strip())
+                    audio = visual_audio if visual_bilibili else PreparedAudio(original, 0, request.duration_seconds, 0)
+                    url = asr.upload_audio(audio.path, lambda:_check(context))
+                    check = _deadline_checkpoint(context, time.monotonic() + ASR_SECONDS)
+                    transcribed = asr.transcribe(url, audio, request.duration_seconds, check, phase)
+                    if not transcribed and not visual_bilibili:
+                        raise AdapterError('no_speech')
+                    if transcribed:
+                        try:
+                            cues = segments([[s.start_seconds, s.end_seconds, s.text] for s in transcribed],
+                                            request.duration_seconds)
+                        except ValueError:
+                            raise AdapterError('invalid_response') from None
+                        if kind == AUDIO:
+                            context.fenced_write(lambda c,t: c.execute(
+                                'UPDATE tasks SET bilibili_transcript=%s WHERE id=%s AND user_id=%s',
+                                (Jsonb(cues), t['id'], t['user_id'])))
+                        request = replace(request, transcript=tuple(TranscriptSegment(*cue) for cue in cues))
+                elif deepseek and not text_only and not visual_bilibili and prepared.audio is not None:
+                    url = adapter.upload_audio(prepared.audio.path, lambda: _check(context))
+                    asr_check = _deadline_checkpoint(context, time.monotonic() + ASR_SECONDS)
+                    transcript = adapter.transcribe(url, prepared.audio, prepared.duration_seconds, asr_check, phase)
+                    request = replace(request, transcript=transcript)
                 deadline = time.monotonic() + request.timeout_seconds
                 checkpoint = _deadline_checkpoint(context, deadline)
-                if deepseek:
+                if visual_bilibili:
+                    from app.bilibili_visual import SUMMARY_SECONDS
+                    from app.visual_summary import summarize_visual
+                    deadline = time.monotonic() + SUMMARY_SECONDS
+                    def invoke(batch, batch_deadline):
+                        check = _deadline_checkpoint(context, batch_deadline)
+                        if deepseek:
+                            return adapter.analyze(batch, check, phase, deadline=batch_deadline)
+                        return adapter.analyze(batch, checkpoint=check, cancelled=context.cancelled, deadline=batch_deadline)
+                    response = summarize_visual(request, adapter, invoke, lambda: _check(context), deadline=deadline)
+                elif deepseek:
                     response = adapter.analyze(request, checkpoint, phase, deadline=deadline)
+                elif isinstance(adapter, QwenModelAdapter):
+                    response = adapter.analyze(request, checkpoint=checkpoint, cancelled=context.cancelled)
                 else:
                     response=adapter.analyze(request,checkpoint=checkpoint)
                 _check(context)
@@ -336,6 +430,7 @@ def _prepare_and_analyze(context,adapter,language='zh') -> ModelResponse:
                     if observation.modality=='visual' and observation.track_index not in visual:raise AdapterError('invalid_response')
                 _record_finish(context,'SUCCEEDED',response=response);return response
             except AdapterError as error:
+                if error.kind=='cancelled':raise ProcessingCancelled('Processing cancelled') from None
                 _record_finish(context,'FAILED',error=error);raise
             except ProcessingCancelled:raise
             except Exception:

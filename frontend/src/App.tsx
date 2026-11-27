@@ -27,7 +27,7 @@ function requestError(status: number, mode: Mode): string {
 
 export default function App() {
   const [health, setHealth] = useState<Health>('checking')
-  const [config, setConfig] = useState<{ support_email?: unknown; available_models?: unknown }>({})
+  const [config, setConfig] = useState<{ support_email?: unknown; available_models?: unknown; bilibili_import_enabled?: unknown }>({})
   const deepseekAvailable = Array.isArray(config.available_models) && config.available_models.includes(DEEPSEEK_MODEL)
   useEffect(() => {
     const controller = new AbortController()
@@ -207,7 +207,7 @@ export default function App() {
             {session.user.role === 'ADMIN' && workspaceView === 'metadata' ? (
               <AdminPanel key={`admin-${session.user.id}-${boundary}`} onExpired={expireSession} />
             ) : <>
-              <ImportForm key={session.user.id+boundary} csrfToken={session.csrf_token} deepseekAvailable={deepseekAvailable} onExpired={expireSession} onImported={importedVideo} />
+              <ImportForm key={session.user.id+boundary} csrfToken={session.csrf_token} deepseekAvailable={deepseekAvailable} bilibiliAvailable={config.bilibili_import_enabled === true} onExpired={expireSession} onImported={importedVideo} />
               <TaskPanel key={`tasks-${session.user.id}-${boundary}`} csrfToken={session.csrf_token} refreshVersion={taskRefresh} onExpired={expireSession} />
             </>}
             </>

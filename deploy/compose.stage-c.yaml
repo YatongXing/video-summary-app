@@ -1,0 +1,54 @@
+# Overlay for the existing Linux Docker topology. No host port or business network for yt-dlp.
+x-download: &download
+  image: ${VSA_BILIBILI_IMAGE:?set verified Stage C download image}
+  pull_policy: never
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  user: "10001:10001"
+  pids_limit: 48
+  mem_limit: 512m
+  cpus: 1.0
+  init: true
+services:
+  api:
+    environment:
+      BILIBILI_IMPORT_ENABLED: ${BILIBILI_IMPORT_ENABLED:-true}
+    volumes:
+      - bilibili-api:/run/bilibili-api:ro
+  bilibili-sockets:
+    <<: *download
+    user: "0:0"
+    cap_add: [CHOWN, FOWNER]
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chmod 770 /run/bilibili-api /run/bilibili-egress && chmod 700 /work && chown 10001:10001 /run/bilibili-api /run/bilibili-egress /work"]
+    network_mode: none
+    volumes:
+      - bilibili-api:/run/bilibili-api
+      - bilibili-egress:/run/bilibili-egress
+      - bilibili-work:/work
+  bilibili-downloader:
+    <<: *download
+    network_mode: none
+    volumes:
+      - bilibili-work:/work
+      - bilibili-api:/run/bilibili-api
+      - bilibili-egress:/run/bilibili-egress:ro
+    depends_on:
+      bilibili-sockets: {condition: service_completed_successfully}
+      bilibili-egress: {condition: service_started}
+  bilibili-egress:
+    <<: *download
+    command: ["/opt/bilibili/egress.py"]
+    networks: [bilibili-public]
+    volumes:
+      - bilibili-egress:/run/bilibili-egress
+    depends_on:
+      bilibili-sockets: {condition: service_completed_successfully}
+volumes:
+  bilibili-api:
+  bilibili-egress:
+  bilibili-work:
+networks:
+  bilibili-public:
+    driver: bridge

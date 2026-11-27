@@ -1,0 +1,7 @@
+ARG VSA_WEB_BASE
+FROM ${VSA_WEB_BASE}
+USER root
+RUN rm -rf /site
+COPY frontend/dist/ /site/
+COPY deploy/wp07_web.py /srv/wp07_web.py
+USER 10001:10001

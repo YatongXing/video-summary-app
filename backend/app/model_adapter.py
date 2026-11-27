@@ -13,6 +13,7 @@ class VisualEvidence:
     data: bytes = field(repr=False)
     media_type: str = 'image/jpeg'
     track_index: int = 0
+    sampled_seconds: tuple[int, ...] = ()
 
 @dataclass(frozen=True)
 class AudioEvidence:
@@ -43,6 +44,9 @@ class ModelRequest:
     task_id: str | None = None
     transcript: tuple[TranscriptSegment, ...] = field(default=(), repr=False)
 
+    batch_summaries: tuple[dict, ...] = field(default=(), repr=False)
+    visual_facts_only: bool = False
+
     @property
     def audio(self):
         return self.audio_tracks[0] if self.audio_tracks else None
@@ -71,13 +75,15 @@ class ModelResponse:
     model_version: str
     adapter_version: str
     localized_candidates: dict | None = None
+    visual_facts: tuple[dict, ...] | None = field(default=None, repr=False)
 
 class AdapterError(Exception):
     CATEGORIES = {'timeout':'EXTERNAL_TIMEOUT', 'rate_limit':'EXTERNAL_RATE_LIMIT',
                   'unavailable':'EXTERNAL_UNAVAILABLE', 'input':'USER_INPUT',
-                  'invalid_response':'INTERNAL', 'output_truncated':'INTERNAL', 'internal':'INTERNAL', 'cancelled':'INTERNAL',
+                  'invalid_response':'INTERNAL', 'no_speech':'USER_INPUT', 'output_truncated':'INTERNAL', 'internal':'INTERNAL', 'cancelled':'INTERNAL',
                   'inline_video_too_large':'USER_INPUT', 'auth':'EXTERNAL_UNAVAILABLE',
-                  'cloud_transfer':'EXTERNAL_UNAVAILABLE', 'evidence_budget':'INTERNAL'}
+                  'cloud_transfer':'EXTERNAL_UNAVAILABLE', 'evidence_budget':'INTERNAL',
+                  'workspace_space':'INTERNAL', 'visual_too_few':'USER_INPUT', 'visual_media':'USER_INPUT'}
     def __init__(self, kind='internal', request_id=None, usage=None):
         self.kind = kind if kind in self.CATEGORIES else 'internal'
         self.request_id = request_id

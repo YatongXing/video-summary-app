@@ -1,0 +1,8 @@
+# Build with named contexts for the app directory and the locally staged wheels.
+ARG VSA_APP_BASE
+FROM ${VSA_APP_BASE}
+USER root
+RUN --mount=from=wheels,target=/wheels,readonly pip install --no-cache-dir --no-index --find-links=/wheels httpx==0.28.1
+COPY --from=app / /srv/app/
+RUN test ! -f /srv/app/safe_download.py || rm /srv/app/safe_download.py
+USER 10001:10001

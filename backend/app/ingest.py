@@ -13,7 +13,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.concurrency import run_in_threadpool
 from app.auth import Principal, connect, mutation_user
-from app import media, safe_download, object_store
+from app import bilibili_import, media, object_store
+from app.bilibili_evidence import AUDIO, SUBTITLES, FULL, fit_visual_subtitles, parse_subtitles
 from app.model_selection import QWEN_MODEL, validate_choice
 router=APIRouter()
 
@@ -40,11 +41,13 @@ def active_session(connection,user):
         AND u.disabled_at IS NULL''',(user.session_id,user.id)).fetchone()
     if found is None: raise media.InputError('SESSION_EXPIRED','登录已失效，请重新登录。',401)
 
-def begin_import(user):
+def begin_import(user, *, expires_in=None):
     maintenance.ensure_open()
     identifier=uuid4(); key=f'originals/{user.id}/{identifier}'
     path=staging_dir()/str(identifier)
     with connect() as connection:
+        if expires_in is not None:
+            connection.execute("SET LOCAL statement_timeout = '5s'")
         connection.execute('SELECT pg_advisory_xact_lock(773504001)')
         active_session(connection,user)
         count=connection.execute("SELECT count(*) AS total FROM input_imports WHERE state IN ('STAGING','STORING') AND expires_at>now()").fetchone()['total']
@@ -52,7 +55,14 @@ def begin_import(user):
             raise media.InputError('IMPORT_BUSY','当前导入较多，请稍后重试。',429)
         connection.execute('INSERT INTO input_imports(id,user_id,object_key,storage_backend,storage_bucket,staging_backend) VALUES (%s,%s,%s,%s,%s,%s)',(identifier,user.id,key,object_store.backend_id(),object_store.bucket(),staging_backend()))
         maintenance.ensure_open()
+        if expires_in is not None:
+            connection.execute("UPDATE input_imports SET expires_at=now()+%s*interval '1 second' WHERE id=%s",
+                               (expires_in,identifier))
     return identifier,key,path
+
+def subtitle_key(user_id, identifier):
+    return f'derived/bilibili-subtitles/{user_id}/{identifier}'
+
 
 def cleanup_import(identifier,key,path,stored,stale_only=False):
     from app import task_locks
@@ -68,7 +78,9 @@ def cleanup_import(identifier,key,path,stored,stale_only=False):
                 stored=stored or row['state']!='STAGING'
             if stored:
                 from app.cleanup import _delete_object
-                _delete_object({'storage_backend':row['storage_backend'],'storage_bucket':row['storage_bucket'],'storage_key':row['object_key'],'storage_version':row['storage_version'],'user_id':row['user_id']})
+                location = {field: row[field] for field in ('storage_backend','storage_bucket','storage_version','user_id')}
+                _delete_object(dict(location, storage_key=row['object_key']))
+                _delete_object(dict(location, storage_key=subtitle_key(row['user_id'], identifier)))
             path.unlink(missing_ok=True)
             with connect() as connection:connection.execute('DELETE FROM input_imports WHERE id=%s',(identifier,))
     except task_locks.LockBusy:
@@ -115,10 +127,12 @@ def safe_filename(value):
     name=''.join(c for c in name if c.isprintable()).strip().strip('.')[:255]
     return name or 'video'
 
-def finish_import(user,identifier,key,path,info,name,cancelled,*,requested_model=QWEN_MODEL):
+def finish_import(user,identifier,key,path,info,name,cancelled,*,requested_model=QWEN_MODEL,deadline=None):
     maintenance.ensure_open()
     if cancelled.is_set(): raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
     with connect() as connection:
+        if deadline is not None:
+            connection.execute("SET LOCAL statement_timeout = '5s'")
         active_session(connection,user)
         row=connection.execute('SELECT * FROM input_imports WHERE id=%s AND expires_at>now() FOR UPDATE',(identifier,)).fetchone()
         if row is not None and (not import_location(row) or row['user_id']!=user.id or row['object_key']!=key or path!=staging_dir()/str(identifier)):raise media.InputError('IMPORT_LOCATION_CHANGED',status=503)
@@ -126,26 +140,50 @@ def finish_import(user,identifier,key,path,info,name,cancelled,*,requested_model
         connection.execute("UPDATE input_imports SET state='STORING' WHERE id=%s",(identifier,))
         maintenance.ensure_open()
     try:
-        object_store.put_original(path,key)
+        if deadline is None:
+            object_store.put_original(path,key)
+        else:
+            object_store.put_original(path,key,deadline=deadline,cancelled=cancelled)
+            if info.get('subtitle'):
+                if cancelled.is_set():
+                    raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
+                if time.monotonic() >= deadline:
+                    raise bilibili_import.failure('TIMEOUT')
+                object_store.put_bilibili_subtitles(subtitle_key(user.id, identifier), info['subtitle'])
         if cancelled.is_set(): raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
         with connect() as connection:
+            if deadline is not None:
+                connection.execute("SET LOCAL statement_timeout = '5s'")
             ledger=connection.execute("SELECT * FROM input_imports WHERE id=%s AND state='STORING' AND expires_at>now() FOR UPDATE",(identifier,)).fetchone()
             if ledger is not None and (not import_location(ledger) or ledger['user_id']!=user.id or ledger['object_key']!=key):raise media.InputError('IMPORT_LOCATION_CHANGED',status=503)
             if ledger is None: raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
             active_session(connection,user)
             if cancelled.is_set(): raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
-            row=connection.execute('''INSERT INTO tasks(user_id,input_kind,display_filename,duration_seconds,requested_model,submitted_at)
-                VALUES (%s,%s,%s,%s,%s,clock_timestamp()) RETURNING id,status,requested_model''',
-                (user.id,info['input_kind'],name,info['media'].duration_seconds,requested_model)).fetchone()
+            row=connection.execute('''INSERT INTO tasks(user_id,input_kind,display_filename,duration_seconds,requested_model,bilibili_evidence,submitted_at)
+                VALUES (%s,%s,%s,%s,%s,%s,clock_timestamp()) RETURNING id,status,requested_model''',
+                (user.id,info['input_kind'],name,info['media'].duration_seconds,requested_model,info.get('evidence', FULL))).fetchone()
             connection.execute('''INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key,byte_size,has_audio,storage_backend,storage_bucket,storage_version)
                 VALUES (%s,%s,'ORIGINAL',%s,%s,%s,%s,%s,%s)''',(row['id'],user.id,key,path.stat().st_size,info['media'].has_audio,ledger['storage_backend'],ledger['storage_bucket'],ledger['storage_version']))
+            if info.get('subtitle'):
+                connection.execute("""INSERT INTO media_assets(task_id,user_id,asset_kind,storage_key,byte_size,
+                    storage_backend,storage_bucket,storage_version) VALUES (%s,%s,'BILIBILI_SUBTITLES',%s,%s,%s,%s,%s)""",
+                    (row['id'],user.id,subtitle_key(user.id,identifier),len(info['subtitle']),
+                     ledger['storage_backend'],ledger['storage_bucket'],ledger['storage_version']))
+            if deadline is not None:
+                if time.monotonic() >= deadline:
+                    raise bilibili_import.failure('TIMEOUT')
+                if cancelled.is_set():
+                    raise media.InputError('IMPORT_CANCELLED','导入已中断。',499)
+                path.unlink()
             connection.execute('DELETE FROM input_imports WHERE id=%s',(identifier,))
             maintenance.ensure_open()
         try: path.unlink(missing_ok=True)
         except OSError: pass
-        return {'id':str(row['id']),'status':row['status'],'filename':name,'duration_seconds':info['media'].duration_seconds,'has_audio':info['media'].has_audio,'requested_model':row['requested_model']}
+        return {'id':str(row['id']),'status':row['status'],'filename':name,'duration_seconds':info['media'].duration_seconds,'has_audio':info['media'].has_audio,'requested_model':row['requested_model'],
+                **({'evidence':info['evidence'], 'has_subtitles':bool(info.get('subtitle'))} if 'evidence' in info else {})}
     except BaseException:
-        cleanup_import(identifier,key,path,True)
+        if deadline is None:
+            cleanup_import(identifier,key,path,True)
         raise
 
 async def validate_and_finish(request,user,identifier,key,path,input_kind,filename,requested_model):
@@ -219,25 +257,109 @@ class URLInput(BaseModel):
     url:str=Field(min_length=1,max_length=4096)
     rights_confirmed:StrictBool
     model:str=QWEN_MODEL
+    combine_visual:StrictBool=False
 
-@router.post('/inputs/url',status_code=201)
-async def import_url(data:URLInput,request:Request,user:Principal=Depends(mutation_user)):
-    maintenance.ensure_open()
-    if data.rights_confirmed is not True: raise media.InputError('RIGHTS_REQUIRED','请先确认拥有导入和处理授权。',400)
-    requested_model=validate_choice(data.model)
-    safe_download.validate_url(data.url)
-    identifier,key,path=begin_import(user)
+@router.post('/inputs/bilibili',status_code=201)
+async def import_bilibili(data:URLInput,request:Request,user:Principal=Depends(mutation_user)):
+    from app.preprocess import _run, PreprocessError
     from app.task_locks import producer
-    with producer('import-'+str(identifier)):
+
+    maintenance.ensure_open()
+    if not bilibili_import.enabled():
+        raise media.InputError('BILIBILI_DISABLED','Bilibili 导入已关闭。',404)
+    if data.rights_confirmed is not True:
+        raise media.InputError('RIGHTS_REQUIRED','请先确认拥有导入和处理授权。',400)
+    requested_model=validate_choice(data.model)
+    bvid,part=bilibili_import.source_url(data.url)
+    budget = bilibili_import.VISUAL_IMPORT_SECONDS if data.combine_visual else bilibili_import.IMPORT_SECONDS
+    identifier,key,path=await run_in_threadpool(lambda:begin_import(user,expires_in=budget+60))
+    deadline=time.monotonic()+budget
+    cancelled=threading.Event()
+    owner=asyncio.current_task()
+
+    async def monitor():
+        message=asyncio.create_task(request.receive())
         try:
-            await run_in_threadpool(safe_download.download_video,data.url,path,media.MAX_BYTES)
-            return await validate_and_finish(request,user,identifier,key,path,'URL',None,requested_model)
-        except BaseException as error:
-            cleanup_import(identifier,key,path,False)
-            if isinstance(error, media.InputError): raise
-            if isinstance(error, TimeoutError): raise media.InputError('IMPORT_TIMEOUT','视频导入超时，请稍后重试。',408) from None
-            if isinstance(error, Exception): raise media.InputError('IMPORT_FAILED','视频导入失败，请稍后重试。',503) from None
+            while True:
+                done,_=await asyncio.wait((message,),timeout=2)
+                if not done:
+                    await run_in_threadpool(maintenance.ensure_open)
+                elif message.result()['type']=='http.disconnect':
+                    return media.InputError('IMPORT_CANCELLED','导入已中断。',499)
+                else:
+                    message=asyncio.create_task(request.receive())
+        except Exception as error:
+            return error
+        finally:
+            message.cancel()
+            await asyncio.gather(message,return_exceptions=True)
+            if not cancelled.is_set() and not asyncio.current_task().cancelling():
+                cancelled.set()
+                owner.cancel()
+
+    def run_media(command, *, timeout, **options):
+        return _run(command,checkpoint=lambda:not cancelled.is_set() and time.monotonic()<deadline,
+                    timeout=max(.001,min(timeout,deadline-time.monotonic())),**options)
+
+    async def wait_thread(function):
+        operation=asyncio.create_task(run_in_threadpool(function))
+        try:
+            return await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            cancelled.set()
+            await asyncio.gather(operation,return_exceptions=True)
             raise
+
+    watcher=asyncio.create_task(monitor())
+    try:
+        with producer('import-'+str(identifier)):
+            async with asyncio.timeout_at(deadline):
+                duration, evidence, subtitle=await bilibili_import.download((bvid,part),path,combine_visual=data.combine_visual)
+                try:
+                    if evidence == SUBTITLES:
+                        try:
+                            await wait_thread(lambda:parse_subtitles(path.read_bytes(), duration))
+                        except (ValueError, UnicodeError):
+                            raise bilibili_import.failure('NO_MEDIA') from None
+                        info=media.MediaInfo(duration,False,'json')
+                    elif evidence == AUDIO:
+                        audio=await wait_thread(lambda:media.validate_bilibili_audio(path,duration,runner=run_media))
+                        info=media.MediaInfo(duration,audio.has_audio,audio.container)
+                    else:
+                        info=await wait_thread(lambda:media.validate_media(path,runner=run_media))
+                        if info.container!='mp4' or abs(info.duration_seconds-duration)>2:
+                            raise bilibili_import.failure('NO_MEDIA')
+                        if subtitle:
+                            try:
+                                subtitle = fit_visual_subtitles(subtitle, duration, info.duration_seconds)
+                            except ValueError:
+                                raise bilibili_import.failure('NO_MEDIA') from None
+                except PreprocessError as error:
+                    if error.code=='PREPROCESS_TIMEOUT' or time.monotonic()>=deadline:
+                        raise bilibili_import.failure('TIMEOUT') from None
+                    raise
+                return await wait_thread(lambda:finish_import(
+                    user,identifier,key,path,{'input_kind':'BILIBILI','media':info,'evidence':evidence,'subtitle':subtitle},
+                    f'{bvid}-p{part}.{info.container}',cancelled,requested_model=requested_model,deadline=deadline))
+    except BaseException as error:
+        cancelled.set()
+        if watcher.done() and not watcher.cancelled():
+            interruption=watcher.result()
+        else:
+            interruption=None
+            watcher.cancel()
+        await run_in_threadpool(cleanup_import,identifier,key,path,False)
+        if isinstance(error,media.InputError): raise
+        if isinstance(error,TimeoutError): raise bilibili_import.failure('TIMEOUT') from None
+        if isinstance(error,asyncio.CancelledError) and interruption is not None:
+            raise interruption from None
+        if isinstance(error,maintenance.MaintenanceClosed): raise
+        if isinstance(error,Exception): raise bilibili_import.failure('UNAVAILABLE') from None
+        raise
+    finally:
+        watcher.cancel()
+        await asyncio.gather(watcher,return_exceptions=True)
+
 
 async def input_error_handler(_request,error):
     return JSONResponse({'detail':error.detail,'code':error.code},status_code=error.status)

@@ -4,7 +4,7 @@ import TaskIdentifier from './TaskIdentifier'
 
 type Quota = { credits: number | null; unlimited: boolean; recovery_seconds: number | null }
 type Task = {
-  id: string; status: string; filename: string | null; submitted_at: string
+  id: string; input_kind?: 'LOCAL' | 'BILIBILI'; status: string; filename: string | null; submitted_at: string
   started_at: string | null; finished_at: string | null; retry_count: number
   cooldown_seconds: number; retry_allowed: boolean; retry_reason: string | null
   failure_category: string | null; failure_code?: string | null; refund_status: string
@@ -16,9 +16,13 @@ const failures: Record<string, string> = {
   EXTERNAL_RATE_LIMIT: '模型服务限流', EXTERNAL_UNAVAILABLE: '模型服务暂不可用', UNKNOWN: '原因暂未确定', USER_CANCELLED: '用户主动取消',
 }
 const modelFailures: Record<string, string> = {
+  MODEL_VISUAL_TOO_FEW: '去除连续重复帧后不足四帧，无法生成画面拼图。',
+  MODEL_VISUAL_MEDIA: '无法按时间点抽取所选视频的画面。',
+  MODEL_WORKSPACE_SPACE: '处理空间不足，请稍后重试。',
   MODEL_INLINE_VIDEO_TOO_LARGE: '视频超过千问内联传输上限（原文件约 7.5 MB）。请配置私有 OSS 大文件传输，或选择更小的视频。',
   MODEL_CLOUD_TRANSFER: '无法通过私有 OSS 传输视频。请检查存储桶设置、权限及网络连接后再试。',
   MODEL_AUTH: '千问拒绝了 API Key 或模型权限。请检查项目 .env 后重新应用配置。',
+  MODEL_NO_SPEECH: '语音转写没有可用文字，请尝试勾选“结合画面”重新导入。',
   MODEL_INPUT: '千问拒绝了视频或请求参数。请核对视频格式，或尝试较短的 H.264 视频。',
   MODEL_INVALID_RESPONSE: '千问返回的结果不完整或未通过校验，请先核对模型用量。',
 }
@@ -175,7 +179,7 @@ export default function TaskPanel({ csrfToken, refreshVersion, onExpired }: {
           {cooldown > 0 && <p className="task-wait">再次尝试约需等待 {duration(cooldown)}。等待结束后仍须由服务器确认。</p>}
           {task.status === 'FAILED' && !task.retry_allowed && cooldown <= 0 && <p className="field-help">{task.retry_count >= 20 ? '已达到累计重试上限。' : task.retry_reason === 'MODEL_DISABLED' ? '此任务的处理模型暂未启用。' : task.retry_reason === 'MODEL_REQUEST_UNCONFIRMED' ? '上次模型调用状态未确认，请联系管理员核对。' : '当前状态暂不可重试，请刷新确认。'}</p>}
           <div className="task-actions"><button className="secondary" type="button" disabled={pending !== null} onClick={() => void removeTask(task)}>删除任务</button>{task.status === 'SUCCEEDED' && <button className="secondary" type="button" onClick={() => setSelectedTask(current => current === task.id ? null : task.id)} aria-expanded={selectedTask === task.id}>{selectedTask === task.id ? '收起结果' : '查看结果'}</button>}{(task.status === 'QUEUED' || task.status === 'PROCESSING') && <button type="button" className="secondary" disabled={pending !== null} onClick={() => void act(task, 'cancel')}>{pending === task.id ? '正在处理…' : '取消任务'}</button>}{task.status === 'FAILED' && <button type="button" className="secondary" disabled={pending !== null || !task.retry_allowed || cooldown > 0} onClick={() => void act(task, 'retry')}>{pending === task.id ? '正在处理…' : '重试任务'}</button>}</div>
-          {selectedTask === task.id && task.status === 'SUCCEEDED' && <ResultPanel key={`result-${task.id}`} taskId={task.id} onExpired={onExpired} />}
+          {selectedTask === task.id && task.status === 'SUCCEEDED' && <ResultPanel key={`result-${task.id}`} taskId={task.id} playback={task.input_kind === 'LOCAL'} onExpired={onExpired} />}
         </li>
       })}</ul>}
       <div className="task-pagination"><button type="button" className="secondary" onClick={() => setOffset(Math.max(0, offset - 20))} disabled={offset === 0 || pending !== null}>上一页</button><span>第 {offset / 20 + 1} 页</span><button type="button" className="secondary" onClick={() => setOffset(offset + 20)} disabled={tasks.length < 20 || pending !== null}>下一页</button></div>

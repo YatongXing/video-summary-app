@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -20,6 +21,33 @@ class MediaInfo:
     duration_seconds: float
     has_audio: bool
     container: str
+
+def validate_bilibili_audio(path, expected_duration, *, runner):
+    """Require one complete AAC track and no video, attachments or second stream."""
+    protocol = ['-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov']
+    try:
+        probe = runner([os.getenv('FFPROBE_BIN', 'ffprobe'), '-v', 'error', *protocol,
+            '-show_entries', 'format=duration:stream=codec_type,codec_name,duration',
+            '-of', 'json', str(path)], capture_output=True, check=True, timeout=30)
+        data = json.loads(probe.stdout)
+        stream, = data['streams']
+        duration = float(stream.get('duration', data['format']['duration']))
+        if (stream['codec_type'] != 'audio' or stream['codec_name'] != 'aac'
+                or not math.isfinite(duration) or not 0 < duration <= MAX_DURATION
+                or abs(duration - expected_duration) > 2):
+            raise ValueError('Invalid audio or duration')
+        output = runner([os.getenv('FFMPEG_BIN', 'ffmpeg'), '-nostdin', '-v', 'info',
+            '-xerror', '-err_detect', 'explode', *protocol, '-i', str(path),
+            '-map', '0:a:0', '-af', 'astats=measure_perchannel=none:measure_overall=Peak_level+RMS_level',
+            '-f', 'null', '-'], capture_output=True, check=True, timeout=180)
+        levels = {key: float(value) for key, value in re.findall(
+            rb'astats[^\r\n]*? (Peak|RMS) level dB: (-inf|-?[0-9.]+)', output.stderr)}
+        if levels.get(b'Peak', 0) <= -85 and levels.get(b'RMS', 0) <= -95:
+            raise InputError('BILIBILI_NO_SPEECH', '音轨没有可用声音，请尝试勾选“结合画面”。')
+        return MediaInfo(duration, True, 'm4a')
+    except (ValueError, KeyError, TypeError, subprocess.CalledProcessError):
+        raise InputError('BILIBILI_NO_MEDIA', '音轨不完整或无法解码。') from None
+
 
 def validate_media(path: Path, *, runner=None) -> MediaInfo:
     maintenance.ensure_open()

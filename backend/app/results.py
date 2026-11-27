@@ -1,5 +1,6 @@
 """Validated private bilingual results and owner-only Markdown downloads."""
 from app import maintenance
+from app.bilibili_evidence import FULL, LABELS
 from copy import deepcopy
 import psycopg
 from app.deletion_control import JournalError
@@ -136,7 +137,7 @@ def _active_content(connection,task_id,user,purpose=None,scope='summary',request
     return authorize_owner(connection,user,task_id)
 
 
-def get_result(task_id,user,language,purpose=None,*,request_id=None):
+def get_result(task_id,user,language,purpose=None,*,request_id=None,display_only=False):
     with tasks.connect() as connection:
         task=_active_content(connection,task_id,user,purpose,'summary',request_id=request_id)
         if task['status']!='SUCCEEDED': raise HTTPException(409,'Result is not ready')
@@ -150,11 +151,17 @@ def get_result(task_id,user,language,purpose=None,*,request_id=None):
             if validated['export']!=row['export_document']: raise OutputError()
         except (OutputError,TypeError,KeyError,ValueError): raise HTTPException(409,'Stored result failed validation') from None
         _active_content(connection,task_id,user,purpose,'summary',request_id=request_id)
+        if task['input_kind']=='BILIBILI':
+            evidence = LABELS[task.get('bilibili_evidence', FULL)][language]
+            if display_only:
+                return {'language':language,'export':{'summary':validated['export']['summary']},
+                        'presentation':{'chapters':validated['presentation']['chapters']},'evidence':evidence}
+            return dict(validated,language=language,offline_test=row['synthetic'],evidence=evidence)
         return dict(validated,language=language,offline_test=row['synthetic'])
 
 @router.get('/tasks/{task_id}/result')
 def result_route(task_id:UUID,language:str=Query('zh',pattern='^(zh|en)$'),user:Principal=Depends(current_user)):
-    return get_result(task_id,user,language)
+    return get_result(task_id,user,language,display_only=True)
 
 def _markdown_text(text: str) -> str:
     # Stored prose is plain text in the UI. Keep it from introducing markup or resources.
@@ -168,7 +175,10 @@ def _markdown_text(text: str) -> str:
 def export_route(task_id:UUID,language:str=Query('zh',pattern='^(zh|en)$'),user:Principal=Depends(current_user)):
     result = get_result(task_id, user, language)
     summary_heading, chapters_heading = ('摘要', '章节') if language == 'zh' else ('Summary', 'Chapters')
-    lines = [f'## {summary_heading}', '', _markdown_text(result['export']['summary']), '', f'## {chapters_heading}', '']
+    lines = [f'## {summary_heading}', '']
+    if result.get('evidence'):
+        lines.extend([_markdown_text(result['evidence']), ''])
+    lines.extend([_markdown_text(result['export']['summary']), '', f'## {chapters_heading}', ''])
     for chapter in result['presentation']['chapters']:
         hours, remainder = divmod(int(chapter['timestamp_seconds']), 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -177,12 +187,15 @@ def export_route(task_id:UUID,language:str=Query('zh',pattern='^(zh|en)$'),user:
     return Response('\n'.join(lines) + '\n', media_type='text/markdown', headers={
         'Content-Disposition': f'attachment; filename="video-summary-{language}.md"',
         'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
     })
 
 
 def _video_response(task_id:UUID,request:Request,user:Principal=Depends(current_user),*,purpose=None,request_id=None):
     with tasks.connect() as connection:
         task=_active_content(connection,task_id,user,purpose,'video',request_id=request_id)
+        if task['input_kind'] != 'LOCAL':
+            raise HTTPException(404,'Video not found')
         asset=connection.execute("SELECT storage_key,byte_size FROM media_assets WHERE task_id=%s AND user_id=%s AND asset_kind='ORIGINAL' AND cleanup_state='REGISTERED' ORDER BY created_at,id LIMIT 1",(task_id,task['user_id'])).fetchone()
         if asset is None: raise HTTPException(404,'Video not found')
     client=object_store.client()

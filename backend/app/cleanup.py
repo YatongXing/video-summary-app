@@ -82,7 +82,7 @@ def _purge_bodies_and_logs(c,t):
     for table in ('model_calls','schedule_events','retry_events','quota_events','task_consents','task_attempts','evaluation_links'):
         c.execute('DELETE FROM '+table+' WHERE task_id=%s',(tid,))
     c.execute("DELETE FROM audit_events WHERE task_id=%s AND retention_class='TASK_30D'",(tid,))
-    c.execute('UPDATE tasks SET display_filename=NULL,duration_seconds=NULL,failure_category=NULL,failure_code=NULL,retry_count=0,cooldown_level=0,cooldown_until=NULL,started_at=NULL,finished_at=NULL,last_heartbeat_at=NULL WHERE id=%s',(tid,))
+    c.execute('UPDATE tasks SET display_filename=NULL,duration_seconds=NULL,bilibili_transcript=NULL,failure_category=NULL,failure_code=NULL,retry_count=0,cooldown_level=0,cooldown_until=NULL,started_at=NULL,finished_at=NULL,last_heartbeat_at=NULL WHERE id=%s',(tid,))
 
 def _progress(**values):
     from app.deletion_control import _write

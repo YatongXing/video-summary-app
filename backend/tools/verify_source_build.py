@@ -70,7 +70,7 @@ def main():
 
     command = [
         sys.executable, str(ROOT / 'backend' / 'tools' / 'verify_s3_12.py'),
-        '--docker-context', args.docker_context,
+        '--docker-context', args.docker_context, '--stage-c-source',
         '--api-image', images['api'], '--worker-image', images['worker'], '--web-image', images['web'],
     ]
     run(command)
